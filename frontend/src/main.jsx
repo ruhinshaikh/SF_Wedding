@@ -19,12 +19,13 @@ function Landing() {
     <main className="narrow center-page">
       <h1 className="display">Simran &amp; Farhan</h1>
       <p className="muted lead">Welcome. Here is everything for the celebrations.</p>
-      <ul className="stack">
+      <ul className="stack landing-links">
         {invites.map((i) => (
           <li key={i.token}>
             <a className="btn btn-rani" href={`/i/${i.token}`}>Open the invitation{invites.length > 1 ? ` for ${i.name}` : ''}</a>
           </li>
         ))}
+        {adminToken.get() && <li><a className="btn btn-ghost" href="/admin">Open the dashboard</a></li>}
         <li><a className="link-btn" href="/events">All events, dates and places</a></li>
         <li><a className="link-btn" href="/nikkah">The Nikkah invitation</a></li>
         <li>
@@ -33,6 +34,17 @@ function Landing() {
       </ul>
     </main>
   )
+}
+
+// The home page shows the login (guest or admin) until someone is logged in.
+function Home() {
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const f = () => bump((n) => n + 1)
+    window.addEventListener('guest-logout', f)
+    return () => window.removeEventListener('guest-logout', f)
+  }, [])
+  return guestToken.get() ? <Landing /> : <Login />
 }
 
 // Every guest-facing page sits behind the mobile-number login (the admin's own login also works).
@@ -55,7 +67,7 @@ createRoot(document.getElementById('root')).render(
     <Suspense fallback={<main className="narrow center-page muted">Loading…</main>}>
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/" element={<RequireLogin><Landing /></RequireLogin>} />
+      <Route path="/" element={<Home />} />
       <Route path="/i/:token" element={<RequireLogin><Invite /></RequireLogin>} />
       <Route path="/nikkah" element={<Opening><NikkahPublic /></Opening>} />
       <Route path="/invite" element={<Opening><Carousel /></Opening>} />

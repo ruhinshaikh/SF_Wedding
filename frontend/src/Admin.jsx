@@ -8,6 +8,7 @@ const TABS = [
   ['groups', 'WhatsApp groups'],
   ['sangeet', 'Sangeet dances'],
   ['vendors', 'Vendors'],
+  ['admins', 'Admins'],
 ]
 
 export default function Admin() {
@@ -57,6 +58,7 @@ export default function Admin() {
         {tab === 'groups' && <Groups />}
         {tab === 'sangeet' && <Songs />}
         {tab === 'vendors' && <Vendors config={config} />}
+        {tab === 'admins' && <Admins config={config} />}
       </main>
     </div>
   )
@@ -64,12 +66,13 @@ export default function Admin() {
 
 function Login({ onDone }) {
   const [pw, setPw] = useState('')
+  const [phone, setPhone] = useState('')
   const [err, setErr] = useState('')
   async function go(e) {
     e.preventDefault()
     setErr('')
     try {
-      const { token } = await api.login(pw)
+      const { token } = await api.login(pw, phone)
       adminToken.set(token)
       onDone()
     } catch (e) {
@@ -81,12 +84,17 @@ function Login({ onDone }) {
       <h1 className="display">Family dashboard</h1>
       <form onSubmit={go} className="stack login">
         <label className="field">
+          <span>Your mobile number</span>
+          <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoFocus autoComplete="tel" placeholder="e.g. 98765 43210" />
+        </label>
+        <label className="field">
           <span>Password</span>
-          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus autoComplete="current-password" />
+          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
         </label>
         {err && <p className="error" role="alert">{err}</p>}
         <button className="btn btn-rani">Log in</button>
       </form>
+      <p className="muted small">Admin with a mobile number? <a href="/?as=admin">Log in with your number</a></p>
     </main>
   )
 }
@@ -237,13 +245,20 @@ function Stat({ n, label, sub }) {
 
 /* ---------------------------------------------------------------- guests */
 
-const blankGuest = (config) => ({ name: '', phone: '', email: '', group: '', max_party: 1, events: config.events.map((e) => e.id), notes: '', offer_stay: false })
+const blankGuest = (config) => ({ name: '', phone: '', email: '', group: '', max_party: 1, events: config.events.map((e) => e.id), notes: '', offer_stay: false, is_admin: false })
 
 function Guests({ config }) {
   const [guests, reload, error] = useLoad(api.guests)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('')
+  const [hideAdmins, setHideAdmins] = useState(() => {
+    try { return localStorage.getItem('wedding_hide_admins') === '1' } catch { return false }
+  })
+  const toggleAdmins = (v) => {
+    setHideAdmins(v)
+    try { localStorage.setItem('wedding_hide_admins', v ? '1' : '0') } catch {}
+  }
   const [editing, setEditing] = useState(null)
   const [note, setNote] = useState('')
 
@@ -251,12 +266,13 @@ function Guests({ config }) {
     if (!guests) return []
     const s = q.trim().toLowerCase()
     return guests.filter((g) => {
+      if (hideAdmins && g.is_admin) return false
       if (groupFilter && g.group !== groupFilter) return false
       if (filter === 'unsent' && g.invite_sent) return false
       if (['pending', 'attending', 'declined'].includes(filter) && g.status !== filter) return false
       return !s || `${g.name} ${g.group} ${g.phone}`.toLowerCase().includes(s)
     })
-  }, [guests, q, filter, groupFilter])
+  }, [guests, q, filter, groupFilter, hideAdmins])
 
   async function sendWhatsApp(g) {
     window.open(g.whatsapp_url, '_blank', 'noopener')
@@ -312,6 +328,10 @@ function Guests({ config }) {
           <option value="attending">Attending</option>
           <option value="declined">Declined</option>
         </select>
+        <label className="check hide-admins">
+          <input type="checkbox" checked={hideAdmins} onChange={(e) => toggleAdmins(e.target.checked)} /> Hide admins
+          {guests.some((g) => g.is_admin) && <span className="muted small">({guests.filter((g) => g.is_admin).length})</span>}
+        </label>
         <button className="btn btn-rani" onClick={() => setEditing(blankGuest(config))}>Add guest</button>
         <label className="btn btn-ghost">
           Import CSV
@@ -348,6 +368,7 @@ function Guests({ config }) {
                   ))}
                   {g.rsvp?.dietary && <div className="muted small">Allergies/other: {g.rsvp.dietary}</div>}
                   {g.offer_stay && !g.rsvp?.needs_stay && <div className="muted small">Stay offered</div>}
+                  {g.is_admin && <div className="small"><span className="badge badge-admin">Admin</span></div>}
                   {g.rsvp?.needs_stay && (
                     <div className="small">
                       Needs a stay ({g.rsvp.stay_guests})
@@ -435,6 +456,7 @@ function GuestForm({ config, initial, onClose, onSaved }) {
           </div>
         </fieldset>
         <label className="check"><input type="checkbox" checked={!!g.offer_stay} onChange={(e) => setG({ ...g, offer_stay: e.target.checked })} /> Offer accommodation (shows the "place to stay" question on this invitation)</label>
+        <label className="check"><input type="checkbox" checked={!!g.is_admin} onChange={(e) => setG({ ...g, is_admin: e.target.checked })} /> Admin: can open this dashboard by logging in with their mobile number (needs a number above)</label>
         <label className="field"><span>Private notes</span><textarea rows={2} value={g.notes} onChange={set('notes')} /></label>
         {err && <p className="error" role="alert">{err}</p>}
         <div className="form-actions"><button className="btn btn-rani">Save guest</button><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
@@ -533,6 +555,87 @@ function Groups() {
 
 const DANCE_LABEL = { solo: 'Solo', couple: 'Couple', group: 'Group' }
 
+// Songs for one dance group: added by the admins, with a warning when another group or guest has the same song.
+function GroupSongs({ group, usedBy, onChange }) {
+  const [title, setTitle] = useState('')
+  const [link, setLink] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const songs = group.songs || []
+  const key = `g${group.id}`
+  const draft = { title, link }
+  const draftClash = title.trim() || link.trim() ? usedBy(draft, key, [group.id]) : []
+  const draftDup = (title.trim() || link.trim()) && songs.some((s) => sameSong(draft, s))
+  const requested = group.members.flatMap((m) => (m.requested || []).map((s) => ({ s, who: m.name }))).filter(({ s }) => !songs.some((x) => sameSong(s, x)))
+
+  async function add(song) {
+    setErr('')
+    setBusy(true)
+    try {
+      await api.addGroupSong(group.id, song)
+      setTitle('')
+      setLink('')
+      onChange()
+    } catch (x) {
+      setErr(x.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function removeSong(i) {
+    await api.removeGroupSong(group.id, i)
+    onChange()
+  }
+
+  return (
+    <div className="group-songs">
+      <p className="label">Songs for this dance ({songs.length})</p>
+      {songs.length === 0 && <p className="muted small">No songs yet.</p>}
+      <ol className="song-list">
+        {songs.map((s, i) => {
+          const others = usedBy(s, key, [group.id])
+          return (
+            <li key={i}>
+              {s.title || 'Untitled'}{' '}
+              {s.link && <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a>}{' '}
+              <button className="link-btn" onClick={() => removeSong(i)}>Remove</button>
+              {others.length > 0 && <div className="song-dup">⚠ Also used by {others.join(', ')}</div>}
+            </li>
+          )
+        })}
+      </ol>
+      {requested.length > 0 && (
+        <div className="small">
+          <p className="muted small">Requested by members:</p>
+          <ul className="song-list">
+            {requested.map(({ s, who }, i) => (
+              <li key={i}>
+                {s.title || 'Untitled'} <span className="muted">({who})</span>{' '}
+                {s.link && <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a>}{' '}
+                <button className="link-btn" onClick={() => add(s)} disabled={busy}>Use for this dance</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <form
+        className="song-add"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (title.trim() || link.trim()) add({ title, link })
+        }}
+      >
+        <input aria-label={`Song title for ${group.name}`} placeholder="Song title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
+        <input aria-label={`Song link for ${group.name}`} placeholder="https://… (YouTube, Spotify)" value={link} onChange={(e) => setLink(e.target.value)} inputMode="url" maxLength={500} />
+        <button className="btn btn-small btn-rani" disabled={busy || !(title.trim() || link.trim())}>Add song</button>
+      </form>
+      {draftDup && <p className="song-warn">⚠ This song is already on this dance's list.</p>}
+      {!draftDup && draftClash.length > 0 && <p className="song-warn">⚠ Already used by {draftClash.join(', ')}. You can still add it.</p>}
+      {err && <p className="error" role="alert">{err}</p>}
+    </div>
+  )
+}
+
 function Songs() {
   const [acts, reloadActs, error] = useLoad(api.songs)
   const [dg, reloadGroups] = useLoad(api.danceGroups)
@@ -542,9 +645,19 @@ function Songs() {
   if (!acts || !dg) return <p className="muted">Loading…</p>
 
   const reload = () => { reloadActs(); reloadGroups() }
-  // other acts that picked the same song
-  const clashes = (a, s) => acts.filter((o) => o.guest_id !== a.guest_id && o.songs.some((x) => sameSong(s, x))).map((o) => o.guest)
-  const clashCount = acts.reduce((n, a) => n + a.songs.filter((s) => clashes(a, s).length).length, 0)
+  // every song in use: chosen by the admins for a dance group, or requested by a guest
+  const uses = [
+    ...dg.groups.flatMap((g) => (g.songs || []).map((s) => ({ s, key: `g${g.id}`, groups: [g.id], who: `${g.name} (group)` }))),
+    ...acts.flatMap((a) => a.songs.map((s) => ({ s, key: `r${a.guest_id}`, groups: a.dance_group_ids || [], who: a.guest }))),
+  ]
+  // others using the same song; songs within the same dance group (a member's request and the group's list) don't clash
+  const usedBy = (s, key, groups = []) => [
+    ...new Set(uses.filter((u) => u.key !== key && !u.groups.some((x) => groups.includes(x)) && sameSong(s, u.s)).map((u) => u.who)),
+  ]
+  const clashes = (a, s) => usedBy(s, `r${a.guest_id}`, a.dance_group_ids || [])
+  const clashCount =
+    acts.reduce((n, a) => n + a.songs.filter((s) => clashes(a, s).length).length, 0) +
+    dg.groups.reduce((n, g) => n + (g.songs || []).filter((s) => usedBy(s, `g${g.id}`, [g.id]).length).length, 0)
   const groupName = Object.fromEntries(dg.groups.map((g) => [g.id, g.name]))
 
   async function create(e) {
@@ -562,8 +675,12 @@ function Songs() {
     await api.deleteDanceGroup(g.id)
     reload()
   }
-  async function assign(guestId, value) {
-    await api.assignDanceGroup(guestId, value ? Number(value) : null)
+  async function addTo(gid, guestId) {
+    await api.addDanceMember(gid, guestId)
+    reload()
+  }
+  async function removeFrom(gid, guestId) {
+    await api.removeDanceMember(gid, guestId)
     reload()
   }
 
@@ -571,7 +688,7 @@ function Songs() {
     <div className="stack-lg">
       <section className="stack">
         <h2 className="display h3">Dance groups</h2>
-        <p className="muted small">Make a group for each dance (for example "Bride's cousins"), then add guests to it. Guests are added from the dropdown on each group, or from the song list below.</p>
+        <p className="muted small">Make a group for each dance (for example "Bride's cousins"), then add guests and songs to it. A guest can be in several groups. Add guests from the dropdown on each group, or from the dance requests below.</p>
         <form className="toolbar" onSubmit={create}>
           <input aria-label="New dance group name" placeholder="New group name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
           <button className="btn btn-rani" disabled={!name.trim()}>Create group</button>
@@ -587,20 +704,23 @@ function Songs() {
                 <li key={m.guest_id}>
                   {m.name}
                   {m.wants_to_dance && <span className="muted small"> ({DANCE_LABEL[m.dance_type] || 'dancing'}, {m.songs} {m.songs === 1 ? 'song' : 'songs'})</span>}{' '}
-                  <button className="link-btn" onClick={() => assign(m.guest_id, '')}>Remove</button>
+                  <button className="link-btn" onClick={() => removeFrom(g.id, m.guest_id)}>Remove</button>
                 </li>
               ))}
             </ul>
             <div className="toolbar">
-              <select aria-label={`Add a guest to ${g.name}`} value="" onChange={(e) => e.target.value && assign(e.target.value, g.id)}>
+              <select aria-label={`Add a guest to ${g.name}`} value="" onChange={(e) => e.target.value && addTo(g.id, e.target.value)}>
                 <option value="">Add a guest…</option>
-                {dg.available.map((a) => (
-                  <option key={a.guest_id} value={a.guest_id}>{a.name}{a.wants_to_dance ? ' (wants to dance)' : ''}</option>
+                {dg.available.filter((a) => !g.members.some((m) => m.guest_id === a.guest_id)).map((a) => (
+                  <option key={a.guest_id} value={a.guest_id}>
+                    {a.name}{a.wants_to_dance ? ' (wants to dance)' : ''}{a.groups ? ` (in ${a.groups} other ${a.groups === 1 ? 'group' : 'groups'})` : ''}
+                  </option>
                 ))}
               </select>
               <button className="link-btn" onClick={() => rename(g)}>Rename</button>
               <button className="link-btn" onClick={() => remove(g)}>Delete</button>
             </div>
+            <GroupSongs group={g} usedBy={usedBy} onChange={reload} />
           </article>
         ))}
       </section>
@@ -620,13 +740,22 @@ function Songs() {
                   {a.dance_type && <span className="badge"> {DANCE_LABEL[a.dance_type]}</span>}
                 </h3>
                 {a.dance_with && <p>Dancing with: {a.dance_with}</p>}
-                <label className="inline-field">
-                  <span>Dance group</span>
-                  <select value={a.dance_group_id || ''} onChange={(e) => assign(a.guest_id, e.target.value)}>
-                    <option value="">None</option>
-                    {dg.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
-                </label>
+                <div className="group-chips">
+                  <span className="small muted">Dance groups:</span>
+                  {(a.dance_group_ids || []).length === 0 && <span className="small muted">none</span>}
+                  {(a.dance_group_ids || []).map((id) => (
+                    <span key={id} className="chip">
+                      {groupName[id]}
+                      <button type="button" aria-label={`Remove ${a.guest} from ${groupName[id]}`} onClick={() => removeFrom(id, a.guest_id)}>×</button>
+                    </span>
+                  ))}
+                  {dg.groups.some((g) => !(a.dance_group_ids || []).includes(g.id)) && (
+                    <select aria-label={`Add ${a.guest} to a dance group`} value="" onChange={(e) => e.target.value && addTo(Number(e.target.value), a.guest_id)}>
+                      <option value="">Add to a group…</option>
+                      {dg.groups.filter((g) => !(a.dance_group_ids || []).includes(g.id)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  )}
+                </div>
                 <ul className="song-list">
                   {a.songs.map((s, i) => (
                     <li key={i}>
@@ -733,3 +862,166 @@ function VendorForm({ initial, config, onClose, onSaved }) {
   )
 }
 
+
+/* ---------------------------------------------------------------- admins */
+
+const last10 = (p) => (p || '').replace(/\D/g, '').slice(-10)
+
+// Admins are guests with the admin flag: they log in with their mobile number and get the dashboard too.
+function AdminActivity() {
+  const [d, setD] = useState(null)
+  useEffect(() => {
+    const load = () => api.adminActivity().then(setD).catch(() => {})
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [])
+  if (!d) return null
+  const active = d.admins.filter((a) => a.active)
+  return (
+    <section className="stack">
+      <h2 className="display h3">Active admins ({active.length})</h2>
+      {active.length === 0 && <p className="muted small">No admin is using the dashboard right now. Updates every 15 seconds.</p>}
+      {d.admins.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Admin</th><th>Mobile</th><th>Logged in with</th><th>Last active</th></tr></thead>
+            <tbody>
+              {d.admins.map((a) => (
+                <tr key={a.phone}>
+                  <td>{a.active && <span className="live-dot" aria-label="active now" />}{a.name || <span className="muted">Not on the guest list</span>}</td>
+                  <td className="small">{a.phone}</td>
+                  <td className="small">{a.via === 'password' ? 'Admin password' : 'Their number'}</td>
+                  <td className="small">{a.active ? 'Active now' : ago(a.seconds_ago)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function Admins({ config }) {
+  const [guests, reload, error] = useLoad(api.guests)
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [group, setGroup] = useState('')
+  const [note, setNote] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (error) return <p className="error">{error}</p>
+  if (!guests) return <p className="muted">Loading…</p>
+
+  const admins = guests.filter((g) => g.is_admin)
+  const candidates = guests.filter((g) => !g.is_admin && last10(g.phone).length === 10)
+
+  async function add(e) {
+    e.preventDefault()
+    setErr('')
+    setNote('')
+    if (!name.trim()) return setErr('Enter their name.')
+    if (last10(phone).length < 10) return setErr('Enter a 10-digit mobile number.')
+    setBusy(true)
+    try {
+      const existing = guests.find((g) => last10(g.phone) === last10(phone))
+      if (existing) {
+        await api.setAdmin(existing.id, true)
+        setNote(`${existing.name} is already on the guest list with that number, so they are now an admin.`)
+      } else {
+        await api.saveGuest({ name: name.trim(), phone: phone.trim(), email: '', group, max_party: 1, events: config.events.map((x) => x.id), notes: '', offer_stay: false, is_admin: true })
+        setNote(`${name.trim()} is now an admin and has been added to the guest list, invited to every event.`)
+      }
+      setName('')
+      setPhone('')
+      setGroup('')
+      reload()
+    } catch (x) {
+      setErr(x.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function makeAdmin(id) {
+    setErr('')
+    setNote('')
+    try {
+      const g = await api.setAdmin(Number(id), true)
+      setNote(`${g.name} is now an admin.`)
+      reload()
+    } catch (x) {
+      setErr(x.message)
+    }
+  }
+
+  async function removeAdmin(g) {
+    if (!confirm(`Remove admin access for ${g.name}? They stay on the guest list.`)) return
+    await api.setAdmin(g.id, false)
+    setNote(`${g.name} is no longer an admin.`)
+    reload()
+  }
+
+  return (
+    <div className="stack-lg">
+      <AdminActivity />
+      <section className="stack">
+        <h2 className="display h3">Admins ({admins.length})</h2>
+        <p className="muted small">
+          Admins log in on the home page with their mobile number (Admin tab) and can use this dashboard. They are guests too: invited to every event and
+          marked as attending all of them (unless they had already replied). They can change their reply on their own invitation.
+          The main admin password always works as well.
+        </p>
+        {admins.length === 0 ? (
+          <p className="muted">No admins yet besides the main password.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="cards">
+              <thead><tr><th>Name</th><th>Mobile</th><th>Reply</th><th></th></tr></thead>
+              <tbody>
+                {admins.map((g) => (
+                  <tr key={g.id}>
+                    <td><strong>{g.name}</strong>{g.group && <div className="muted small">{g.group}</div>}</td>
+                    <td className="small">{g.phone}</td>
+                    <td><span className={`badge ${g.status}`}>{g.status === 'attending' ? 'Attending' : g.status === 'declined' ? 'Declined' : 'Waiting'}</span></td>
+                    <td><button className="link-btn danger" onClick={() => removeAdmin(g)}>Remove admin</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="stack">
+        <h2 className="display h3">Add an admin</h2>
+        <form className="stack admin-add" onSubmit={add}>
+          <div className="admin-add-row">
+            <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rukhsar Shaikh" maxLength={200} /></label>
+            <label className="field"><span>Mobile number</span><input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="98450 12345" /></label>
+            <label className="field">
+              <span>Group</span>
+              <select value={group} onChange={(e) => setGroup(e.target.value)}>
+                <option value="">Not set</option>
+                {(config.guest_groups || []).map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </label>
+          </div>
+          <div><button className="btn btn-rani" disabled={busy}>{busy ? 'Adding…' : 'Add admin'}</button></div>
+        </form>
+        {candidates.length > 0 && (
+          <label className="field">
+            <span>Or make someone already on the guest list an admin</span>
+            <select value="" onChange={(e) => e.target.value && makeAdmin(e.target.value)}>
+              <option value="">Choose a guest…</option>
+              {candidates.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.phone})</option>)}
+            </select>
+          </label>
+        )}
+        {err && <p className="error" role="alert">{err}</p>}
+        {note && <p className="success" role="status">{note}</p>}
+      </section>
+    </div>
+  )
+}

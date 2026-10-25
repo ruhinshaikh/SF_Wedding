@@ -68,6 +68,7 @@ class Guest(Base):
     last_ip: Mapped[str] = mapped_column(String(64), default="")
     visits: Mapped[int] = mapped_column(Integer, default=0)
     dance_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Sangeet dance group set by the admin
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)  # can open the dashboard after logging in with their number
 
     rsvp: Mapped["Rsvp | None"] = relationship(
         back_populates="guest", uselist=False, cascade="all, delete-orphan", lazy="selectin"
@@ -108,7 +109,32 @@ class DanceGroup(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
     notes: Mapped[str] = mapped_column(Text, default="")
+    songs: Mapped[list] = mapped_column(JSON, default=list)  # [{"title": str, "link": str}] chosen by the admins
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AdminSeen(Base):
+    """Who is using the dashboard: one row per admin mobile number, updated as they use it."""
+
+    __tablename__ = "admin_seen"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone: Mapped[str] = mapped_column(String(16), unique=True, index=True)  # last 10 digits
+    name: Mapped[str] = mapped_column(String(200), default="")
+    via: Mapped[str] = mapped_column(String(16), default="")  # "number" (admin guest) or "password"
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+class DanceMember(Base):
+    """A guest in a Sangeet dance group. A guest can be in several groups."""
+
+    __tablename__ = "dance_members"
+    __table_args__ = (UniqueConstraint("guest_id", "group_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    group_id: Mapped[int] = mapped_column(ForeignKey("dance_groups.id", ondelete="CASCADE"))
 
 
 class GroupMark(Base):
@@ -165,7 +191,22 @@ def init_db() -> None:
             }.items():
                 if name not in have:
                     conn.execute(text(f"ALTER TABLE rsvps ADD COLUMN {name} {ddl}"))
+        dg_have = {c["name"] for c in insp.get_columns("dance_groups")}
+        if "songs" not in dg_have:
+            conn.execute(text("ALTER TABLE dance_groups ADD COLUMN songs JSON NOT NULL DEFAULT '[]'"))
+        if "is_admin" not in guest_have:
+            conn.execute(text("ALTER TABLE guests ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
         if "dance_group_id" not in guest_have:
             conn.execute(text("ALTER TABLE guests ADD COLUMN dance_group_id INTEGER"))
         if "dance_type" not in have:
             conn.execute(text("ALTER TABLE rsvps ADD COLUMN dance_type VARCHAR(10) NOT NULL DEFAULT ''"))
+    # guests used to be in one dance group (guests.dance_group_id): carry those over to dance_members once
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO dance_members (guest_id, group_id) "
+            "SELECT g.id, g.dance_group_id FROM guests g "
+            "WHERE g.dance_group_id IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM dance_groups d WHERE d.id = g.dance_group_id) "
+            "AND NOT EXISTS (SELECT 1 FROM dance_members m WHERE m.guest_id = g.id AND m.group_id = g.dance_group_id)"
+        ))
+        conn.execute(text("UPDATE guests SET dance_group_id = NULL WHERE dance_group_id IS NOT NULL"))

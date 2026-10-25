@@ -33,11 +33,12 @@ export default function SiteNav() {
         ['/events', 'All events, dates and places'],
         ['/invite', 'All invitations (slideshow)'],
         ['/nikkah', 'The Nikkah invitation'],
+        ...(adminToken.get() ? [['/admin', 'Dashboard (admin)']] : []),
       ]
     : [
         ['/invite', 'All invitations (slideshow)'],
         ['/nikkah', 'The Nikkah invitation'],
-        ['/login', 'Log in to reply'],
+        ['/', 'Log in (guests and admin)'],
       ]
 
   function back() {
@@ -56,7 +57,7 @@ export default function SiteNav() {
 
   return (
     <nav className="site-nav" ref={box} aria-label="Site">
-      {pathname !== home && (
+      {![home, '/', '/login'].includes(pathname) && (
         <button type="button" className="nav-btn" onClick={back} aria-label="Go back">
           <span aria-hidden="true">‹</span> <span className="nav-text">Back</span>
         </button>

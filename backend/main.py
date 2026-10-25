@@ -24,10 +24,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from db import DanceGroup, Guest, GroupMark, Rsvp, SessionLocal, Vendor, init_db
+from db import AdminSeen, DanceGroup, DanceMember, Guest, GroupMark, Rsvp, SessionLocal, Vendor, init_db
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
@@ -89,26 +89,71 @@ def _check_production_settings() -> None:
         raise RuntimeError("Set ADMIN_PASSWORD to at least 8 characters.")
 
 
-def make_admin_token() -> str:
+def make_admin_token(guest_id: Optional[int] = None, phone: str = "") -> str:
+    """Admin session, always tied to a person so the dashboard can show who is active.
+    Token payload is a<guest id>:<expiry> for a guest made admin, or p<mobile>:<expiry> for the shared admin login."""
     expiry = str(int(time.time()) + SESSION_SECONDS)
-    sig = hmac.new(_secret(), expiry.encode(), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{expiry}.{sig}".encode()).decode()
+    payload = f"a{guest_id}:{expiry}" if guest_id is not None else f"p{phone}:{expiry}"
+    sig = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
+
+
+def admin_token_info(token: str):
+    """("guest", guest_id) or ("password", mobile) for a validly signed, unexpired admin token, else None.
+    Older tokens without a person attached are no longer accepted, so everyone logs in once more."""
+    try:
+        payload, sig = base64.urlsafe_b64decode(token.encode()).decode().rsplit(".", 1)
+        good = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, good) or payload[:1] not in ("a", "p"):
+            return None
+        who, expiry = payload[1:].split(":", 1)
+        if int(expiry) <= time.time():
+            return None
+        return ("guest", int(who)) if payload[0] == "a" else ("password", who)
+    except Exception:
+        return None
 
 
 def valid_admin_token(token: str) -> bool:
-    try:
-        expiry, sig = base64.urlsafe_b64decode(token.encode()).decode().split(".", 1)
-        good = hmac.new(_secret(), expiry.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and int(expiry) > time.time()
-    except Exception:
-        return False
+    return admin_token_info(token) is not None
 
 
-def require_admin(request: Request, t: Optional[str] = Query(default=None)) -> None:
+def require_admin(request: Request, t: Optional[str] = Query(default=None), db: Session = Depends(get_db)) -> None:
     auth = request.headers.get("authorization", "")
     token = auth[7:] if auth.lower().startswith("bearer ") else (t or "")
-    if not token or not valid_admin_token(token):
+    info = admin_token_info(token) if token else None
+    if info and info[0] == "guest":
+        # a guest admin loses access as soon as the admin flag is taken off (or the guest is deleted)
+        g = db.get(Guest, info[1])
+        if not g or not g.is_admin:
+            info = None
+    if not info:
         raise HTTPException(401, "Admin login required")
+    note_admin_activity(db, request, info)
+
+
+def note_admin_activity(db: Session, request: Request, info) -> None:
+    """Remember which admin is using the dashboard (at most one write every 30 seconds per admin)."""
+    if info[0] == "guest":
+        g = db.get(Guest, info[1])
+        phone, name, via = phone10(g.phone), g.name, "number"
+    else:
+        phone, via = info[1], "password"
+        g = next((x for x in db.scalars(select(Guest)).all() if phone10(x.phone) == phone), None)
+        name = g.name if g else ""
+    if not phone:
+        return
+    row = db.scalar(select(AdminSeen).where(AdminSeen.phone == phone))
+    now_dt = datetime.now(timezone.utc)
+    if row and row.last_seen:
+        last = row.last_seen if row.last_seen.tzinfo else row.last_seen.replace(tzinfo=timezone.utc)
+        if (now_dt - last).total_seconds() < 30 and row.name == name:
+            return
+    if not row:
+        row = AdminSeen(phone=phone)
+        db.add(row)
+    row.name, row.via, row.last_seen, row.last_ip = name, via, now_dt, client_ip(request)
+    db.commit()
 
 
 # ---------------------------------------------------------------- guest login (phone number)
@@ -185,15 +230,19 @@ def guest_login(body: GuestLoginIn, request: Request, db: Session = Depends(get_
         _login_misses[ip] = misses
         raise HTTPException(404, "We couldn't find that number on the guest list. Use the number your invitation was sent to.")
     _login_misses.pop(ip, None)
+    admin = next((g for g in matches if g.is_admin), None)
     return {
         "token": make_guest_token(p),
         "name": matches[0].name,
         "invites": [{"name": g.name, "token": g.token} for g in matches],
+        # guests marked as admin also get into the dashboard
+        "admin_token": make_admin_token(admin.id) if admin else None,
     }
 
 
 class LoginIn(BaseModel):
     password: str
+    phone: str = Field(default="", max_length=40)
 
 
 @app.post("/api/admin/login")
@@ -202,7 +251,21 @@ def admin_login(body: LoginIn):
     if not expected or not hmac.compare_digest(body.password, expected):
         time.sleep(0.5)
         raise HTTPException(401, "Wrong password")
-    return {"token": make_admin_token()}
+    p = phone10(body.phone)
+    if not p:
+        raise HTTPException(422, "Enter your 10-digit mobile number too, so we know who is using the dashboard.")
+    return {"token": make_admin_token(phone=p)}
+
+
+@app.get("/api/admin/admins/activity", dependencies=[Depends(require_admin)])
+def admin_activity(db: Session = Depends(get_db)):
+    rows = []
+    for r in db.scalars(select(AdminSeen)).all():
+        last = r.last_seen if r.last_seen.tzinfo else r.last_seen.replace(tzinfo=timezone.utc)
+        ago = (datetime.now(timezone.utc) - last).total_seconds()
+        rows.append({"phone": r.phone, "name": r.name, "via": r.via, "ip": r.last_ip, "seconds_ago": ago, "active": ago <= ACTIVE_WINDOW})
+    rows.sort(key=lambda r: r["seconds_ago"])
+    return {"admins": rows}
 
 
 # ---------------------------------------------------------------- helpers
@@ -303,6 +366,7 @@ def guest_dict(g: Guest) -> dict:
         "invite_sent": g.invite_sent,
         "notes": g.notes,
         "offer_stay": g.offer_stay,
+        "is_admin": g.is_admin,
         "invite_url": invite_url(g),
         "whatsapp_url": whatsapp_url(g),
         "status": rsvp_status(g),
@@ -419,6 +483,16 @@ def songs_taken(token: str, request: Request, db: Session = Depends(get_db)):
         if g.id == me.id or not (g.rsvp and g.rsvp.wants_to_dance):
             continue
         for s in g.rsvp.songs or []:
+            key = (s.get("title", "").strip().lower(), s.get("link", "").strip().lower())
+            if key not in seen:
+                seen.add(key)
+                out.append({"title": s.get("title", ""), "link": s.get("link", "")})
+    # songs the admins have set for the dance groups count as taken too (except for this guest's own group)
+    my_groups = set(db.scalars(select(DanceMember.group_id).where(DanceMember.guest_id == me.id)).all())
+    for grp in db.scalars(select(DanceGroup)).all():
+        if grp.id in my_groups:
+            continue
+        for s in grp.songs or []:
             key = (s.get("title", "").strip().lower(), s.get("link", "").strip().lower())
             if key not in seen:
                 seen.add(key)
@@ -583,6 +657,7 @@ class GuestIn(BaseModel):
     events: list[str] = Field(default_factory=list)
     notes: str = ""
     offer_stay: bool = False
+    is_admin: bool = False
 
 
 def _clean_events(evs: list[str]) -> list[str]:
@@ -596,10 +671,24 @@ def list_guests(db: Session = Depends(get_db)):
     return [guest_dict(g) for g in guests]
 
 
+def admin_attends_everything(g: Guest) -> None:
+    """Admins are family: invited to every event and counted as attending, unless they have already replied."""
+    g.events = event_ids()
+    if g.rsvp is None:
+        from db import now
+
+        g.rsvp = Rsvp(
+            events={eid: {"attending": True, "headcount": max(1, g.max_party), "food": {}} for eid in g.events},
+            responded_at=now(),
+        )
+
+
 @app.post("/api/admin/guests", dependencies=[Depends(require_admin)])
 def create_guest(body: GuestIn, db: Session = Depends(get_db)):
     g = Guest(**body.model_dump())
     g.events = _clean_events(body.events) or event_ids()
+    if g.is_admin:
+        admin_attends_everything(g)
     db.add(g)
     db.commit()
     return guest_dict(g)
@@ -610,9 +699,12 @@ def update_guest(gid: int, body: GuestIn, db: Session = Depends(get_db)):
     g = db.get(Guest, gid)
     if not g:
         raise HTTPException(404, "Guest not found")
+    was_admin = g.is_admin
     for k, v in body.model_dump().items():
         setattr(g, k, v)
     g.events = _clean_events(body.events)
+    if g.is_admin and not was_admin:
+        admin_attends_everything(g)
     db.commit()
     return guest_dict(g)
 
@@ -622,6 +714,8 @@ def delete_guest(gid: int, db: Session = Depends(get_db)):
     g = db.get(Guest, gid)
     if not g:
         raise HTTPException(404, "Guest not found")
+    db.execute(delete(DanceMember).where(DanceMember.guest_id == gid))
+    db.execute(delete(GroupMark).where(GroupMark.guest_id == gid))
     db.delete(g)
     db.commit()
     return {"ok": True}
@@ -633,6 +727,24 @@ def mark_sent(gid: int, sent: bool = True, db: Session = Depends(get_db)):
     if not g:
         raise HTTPException(404, "Guest not found")
     g.invite_sent = sent
+    db.commit()
+    return guest_dict(g)
+
+
+class AdminFlag(BaseModel):
+    is_admin: bool
+
+
+@app.post("/api/admin/guests/{gid}/admin", dependencies=[Depends(require_admin)])
+def set_guest_admin(gid: int, body: AdminFlag, db: Session = Depends(get_db)):
+    g = db.get(Guest, gid)
+    if not g:
+        raise HTTPException(404, "Guest not found")
+    if body.is_admin and not phone10(g.phone):
+        raise HTTPException(422, f"Add a mobile number for {g.name} first: admins log in with it.")
+    if body.is_admin and not g.is_admin:
+        admin_attends_everything(g)
+    g.is_admin = body.is_admin
     db.commit()
     return guest_dict(g)
 
@@ -722,6 +834,7 @@ def export_guests(db: Session = Depends(get_db)):
     cfg = load_config()
     guests = db.scalars(select(Guest).order_by(Guest.name)).all()
     dance_group_names = {d.id: d.name for d in db.scalars(select(DanceGroup)).all()}
+    groups_of = guest_dance_groups(db)
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(
@@ -752,7 +865,7 @@ def export_guests(db: Session = Depends(get_db)):
                 r.message if r else "",
                 "yes" if r and r.wants_to_dance else "",
                 r.dance_type if r else "",
-                dance_group_names.get(g.dance_group_id, ""),
+                " | ".join(dance_group_names[x] for x in groups_of.get(g.id, []) if x in dance_group_names),
                 r.dance_with if r else "",
                 " | ".join(f"{s['title']} {s['link']}".strip() for s in (r.songs if r else [])),
                 "yes" if r and r.needs_stay else "",
@@ -773,6 +886,7 @@ def export_guests(db: Session = Depends(get_db)):
 
 @app.get("/api/admin/songs", dependencies=[Depends(require_admin)])
 def song_requests(db: Session = Depends(get_db)):
+    groups_of = guest_dance_groups(db)
     guests = db.scalars(select(Guest).order_by(Guest.name)).all()
     acts = []
     for g in guests:
@@ -788,7 +902,7 @@ def song_requests(db: Session = Depends(get_db)):
                     "notes": r.dance_notes,
                     "songs": r.songs,
                     "phone": g.phone,
-                    "dance_group_id": g.dance_group_id,
+                    "dance_group_ids": groups_of.get(g.id, []),
                 }
             )
     return acts
@@ -799,15 +913,12 @@ class DanceGroupIn(BaseModel):
     notes: str = Field(default="", max_length=1000)
 
 
-class DanceGroupAssign(BaseModel):
-    group_id: Optional[int] = None
-
-
 @app.get("/api/admin/dance-groups", dependencies=[Depends(require_admin)])
 def list_dance_groups(db: Session = Depends(get_db)):
     groups = db.scalars(select(DanceGroup).order_by(DanceGroup.name)).all()
     guests = db.scalars(select(Guest).order_by(Guest.name)).all()
     sangeet_ids = {e["id"] for e in load_config()["events"] if e.get("is_sangeet")}
+    groups_of = guest_dance_groups(db)
     out = []
     for grp in groups:
         members = [
@@ -817,18 +928,50 @@ def list_dance_groups(db: Session = Depends(get_db)):
                 "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance),
                 "dance_type": g.rsvp.dance_type if g.rsvp else "",
                 "songs": len(g.rsvp.songs) if g.rsvp else 0,
+                "requested": (g.rsvp.songs or []) if g.rsvp and g.rsvp.wants_to_dance else [],
             }
             for g in guests
-            if g.dance_group_id == grp.id
+            if grp.id in groups_of.get(g.id, [])
         ]
-        out.append({"id": grp.id, "name": grp.name, "notes": grp.notes, "members": members})
-    # guests who could be added: invited to a Sangeet and not already in a group
+        out.append({"id": grp.id, "name": grp.name, "notes": grp.notes, "songs": grp.songs or [], "members": members})
+    # guests who can be added to a group: anyone invited to a Sangeet (a guest can be in several groups)
     available = [
-        {"guest_id": g.id, "name": g.name, "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance)}
+        {"guest_id": g.id, "name": g.name, "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance), "groups": len(groups_of.get(g.id, []))}
         for g in guests
-        if g.dance_group_id is None and sangeet_ids & set(g.events)
+        if sangeet_ids & set(g.events)
     ]
     return {"groups": out, "available": available}
+
+
+@app.post("/api/admin/dance-groups/{gid}/songs", dependencies=[Depends(require_admin)])
+def add_group_song(gid: int, body: SongIn, db: Session = Depends(get_db)):
+    grp = db.get(DanceGroup, gid)
+    if not grp:
+        raise HTTPException(404, "Dance group not found")
+    title, link = body.title.strip(), body.link.strip()
+    if not title and not link:
+        raise HTTPException(422, "Add a song title or a link")
+    if link and not link.lower().startswith(("http://", "https://")):
+        raise HTTPException(422, "Song links need to start with http:// or https://")
+    if len(grp.songs or []) >= 20:
+        raise HTTPException(422, "A group can have up to 20 songs")
+    grp.songs = [*(grp.songs or []), {"title": title, "link": link}]  # new list so the change is saved
+    db.commit()
+    return {"ok": True, "songs": grp.songs}
+
+
+@app.delete("/api/admin/dance-groups/{gid}/songs/{index}", dependencies=[Depends(require_admin)])
+def remove_group_song(gid: int, index: int, db: Session = Depends(get_db)):
+    grp = db.get(DanceGroup, gid)
+    if not grp:
+        raise HTTPException(404, "Dance group not found")
+    songs = list(grp.songs or [])
+    if not 0 <= index < len(songs):
+        raise HTTPException(404, "Song not found")
+    songs.pop(index)
+    grp.songs = songs
+    db.commit()
+    return {"ok": True, "songs": grp.songs}
 
 
 @app.post("/api/admin/dance-groups", dependencies=[Depends(require_admin)])
@@ -854,20 +997,35 @@ def delete_dance_group(gid: int, db: Session = Depends(get_db)):
     grp = db.get(DanceGroup, gid)
     if not grp:
         raise HTTPException(404, "Dance group not found")
-    db.execute(update(Guest).where(Guest.dance_group_id == gid).values(dance_group_id=None))
+    db.execute(delete(DanceMember).where(DanceMember.group_id == gid))
     db.delete(grp)
     db.commit()
     return {"ok": True}
 
 
-@app.post("/api/admin/guests/{guest_id}/dance-group", dependencies=[Depends(require_admin)])
-def assign_dance_group(guest_id: int, body: DanceGroupAssign, db: Session = Depends(get_db)):
-    g = db.get(Guest, guest_id)
-    if not g:
-        raise HTTPException(404, "Guest not found")
-    if body.group_id is not None and not db.get(DanceGroup, body.group_id):
+def guest_dance_groups(db: Session) -> dict[int, list[int]]:
+    """guest id -> ids of the dance groups they are in"""
+    out: dict[int, list[int]] = {}
+    for m in db.scalars(select(DanceMember)).all():
+        out.setdefault(m.guest_id, []).append(m.group_id)
+    return out
+
+
+@app.post("/api/admin/dance-groups/{gid}/members/{guest_id}", dependencies=[Depends(require_admin)])
+def add_dance_member(gid: int, guest_id: int, db: Session = Depends(get_db)):
+    if not db.get(DanceGroup, gid):
         raise HTTPException(404, "Dance group not found")
-    g.dance_group_id = body.group_id
+    if not db.get(Guest, guest_id):
+        raise HTTPException(404, "Guest not found")
+    if not db.scalar(select(DanceMember).where(DanceMember.group_id == gid, DanceMember.guest_id == guest_id)):
+        db.add(DanceMember(group_id=gid, guest_id=guest_id))
+        db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/dance-groups/{gid}/members/{guest_id}", dependencies=[Depends(require_admin)])
+def remove_dance_member(gid: int, guest_id: int, db: Session = Depends(get_db)):
+    db.execute(delete(DanceMember).where(DanceMember.group_id == gid, DanceMember.guest_id == guest_id))
     db.commit()
     return {"ok": True}
 

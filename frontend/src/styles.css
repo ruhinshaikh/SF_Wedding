@@ -438,3 +438,31 @@ body { padding-bottom: 4.5rem; }
 .taken-songs ul { margin: 0.5rem 0 0; padding-left: 1.2rem; display: grid; gap: 0.25rem; }
 .song-warn { margin: 0.3rem 0 0.6rem; padding: 0.45rem 0.7rem; border-radius: 8px; background: #fff4d6; color: #7a4b00; font-size: 0.88rem; }
 .song-dup { color: #7a4b00; font-size: 0.85rem; }
+
+/* ---------- home / login ---------- */
+.login-page { gap: 0.5rem; }
+.login-kicker { margin: 0; letter-spacing: 0.14em; text-transform: uppercase; font-size: 0.78rem; color: var(--rani); }
+.login-switch { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 1rem 0 0.5rem; border-radius: 999px; background: var(--blush); width: min(100%, 320px); }
+.login-switch button { font: inherit; font-weight: 600; padding: 0.55rem 1rem; border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+.login-switch button.on { background: var(--ink); color: #fff; }
+.login-switch button:focus-visible { outline: 2px solid var(--rani); outline-offset: 2px; }
+.login-public { margin-top: 1rem; }
+.badge.badge-admin { background: var(--ink); color: #f6d27a; }
+.landing-links { list-style: none; padding: 0; margin: 1rem 0 0; }
+.admin-add-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem; }
+.link-btn.danger { color: var(--err); }
+.hide-admins { white-space: nowrap; }
+.live-dot { display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.45rem; border-radius: 50%; background: #2fbf71; box-shadow: 0 0 0 3px rgba(47, 191, 113, 0.2); vertical-align: middle; }
+
+/* songs on each dance group */
+.group-songs { margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px dashed var(--line); display: grid; gap: 0.4rem; }
+.group-songs .song-list { margin: 0; }
+.song-add { display: grid; grid-template-columns: 1fr 1.3fr auto; gap: 0.5rem; align-items: center; }
+@media (max-width: 640px) { .song-add { grid-template-columns: 1fr; } }
+/* dashboard tabs always on their own row, so a 6th tab never wraps alone */
+.admin-head .tabs { order: 3; flex: 1 1 100%; }
+.group-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.3rem 0; }
+.group-chips select { width: auto; }
+.chip { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.3rem 0.15rem 0.7rem; border-radius: 999px; background: var(--blush); font-size: 0.85rem; font-weight: 600; }
+.chip button { border: 0; background: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.3rem; color: var(--muted); }
+.chip button:hover { color: var(--err); }

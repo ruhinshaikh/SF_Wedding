@@ -67,7 +67,8 @@ export const api = {
   rsvp: (token, body) => request(`/invite/${token}/rsvp`, { method: 'POST', body }),
   songsTaken: (token) => request(`/invite/${token}/songs-taken`),
   inviteGroups: (token) => request(`/invite/${token}/groups`),
-  login: (password) => request('/admin/login', { method: 'POST', body: { password } }),
+  login: (password, phone) => request('/admin/login', { method: 'POST', body: { password, phone } }),
+  adminActivity: () => request('/admin/admins/activity', { admin: true }),
   config: () => request('/config'),
   summary: () => request('/admin/summary', { admin: true }),
   guests: () => request('/admin/guests', { admin: true }),
@@ -77,6 +78,7 @@ export const api = {
       body: g,
       admin: true,
     }),
+  setAdmin: (id, isAdmin) => request(`/admin/guests/${id}/admin`, { method: 'POST', body: { is_admin: isAdmin }, admin: true }),
   deleteGuest: (id) => request(`/admin/guests/${id}`, { method: 'DELETE', admin: true }),
   markSent: (id, sent) => request(`/admin/guests/${id}/sent?sent=${sent}`, { method: 'POST', admin: true }),
   importGuests: (file) => {
@@ -88,11 +90,13 @@ export const api = {
   markGroup: (gid, guestId, done) => request(`/admin/groups/${gid}/guests/${guestId}?done=${done}`, { method: 'POST', admin: true }),
   songs: () => request('/admin/songs', { admin: true }),
   danceGroups: () => request('/admin/dance-groups', { admin: true }),
+  addGroupSong: (gid, song) => request(`/admin/dance-groups/${gid}/songs`, { method: 'POST', body: song, admin: true }),
+  removeGroupSong: (gid, i) => request(`/admin/dance-groups/${gid}/songs/${i}`, { method: 'DELETE', admin: true }),
   saveDanceGroup: (g) =>
     request(g.id ? `/admin/dance-groups/${g.id}` : '/admin/dance-groups', { method: g.id ? 'PUT' : 'POST', body: g, admin: true }),
   deleteDanceGroup: (id) => request(`/admin/dance-groups/${id}`, { method: 'DELETE', admin: true }),
-  assignDanceGroup: (guestId, groupId) =>
-    request(`/admin/guests/${guestId}/dance-group`, { method: 'POST', body: { group_id: groupId }, admin: true }),
+  addDanceMember: (gid, guestId) => request(`/admin/dance-groups/${gid}/members/${guestId}`, { method: 'POST', admin: true }),
+  removeDanceMember: (gid, guestId) => request(`/admin/dance-groups/${gid}/members/${guestId}`, { method: 'DELETE', admin: true }),
   vendors: () => request('/admin/vendors', { admin: true }),
   saveVendor: (v) =>
     request(v.id ? `/admin/vendors/${v.id}` : '/admin/vendors', {
