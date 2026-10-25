@@ -7,6 +7,9 @@ import Invite, { NikkahPublic, Preview } from './Invite.jsx'
 import Admin from './Admin.jsx'
 import Schedule from './Schedule.jsx'
 import Carousel from './Carousel.jsx'
+import Music from './Music.jsx'
+import SiteNav from './SiteNav.jsx'
+import Opening from './Opening.jsx'
 import './styles.css'
 
 function Landing() {
@@ -46,12 +49,14 @@ function RequireLogin({ children }) {
 
 createRoot(document.getElementById('root')).render(
   <BrowserRouter>
+    <Music />
+    <SiteNav />
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<RequireLogin><Landing /></RequireLogin>} />
       <Route path="/i/:token" element={<RequireLogin><Invite /></RequireLogin>} />
-      <Route path="/nikkah" element={<NikkahPublic />} />
-      <Route path="/invite" element={<Carousel />} />
+      <Route path="/nikkah" element={<Opening><NikkahPublic /></Opening>} />
+      <Route path="/invite" element={<Opening><Carousel /></Opening>} />
       <Route path="/events" element={<RequireLogin><Schedule /></RequireLogin>} />
       <Route path="/schedule" element={<RequireLogin><Schedule /></RequireLogin>} />
       <Route path="/preview" element={<RequireLogin><Preview /></RequireLogin>} />

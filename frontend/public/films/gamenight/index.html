@@ -82,6 +82,16 @@ body { background: var(--page); color: var(--cream); font-family: var(--body); }
 @keyframes tw { 0%, 100% { opacity: 0; transform: scale(0.2); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes confetti { 0% { transform: translate(0, -10px) rotate(0); opacity: 0; } 8% { opacity: 1; } 100% { transform: translate(var(--dx), 190px) rotate(520deg); opacity: 0.9; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+/* Full-screen mode for the phone slideshow (?full=1): the 9:16 stage covers the whole screen, a little of the sides
+   may be trimmed on tall phones, and the film's own buttons are hidden because the slideshow has its own. */
+html.full .frame { padding: 0; gap: 0; overflow: hidden; position: relative; }
+html.full .stage { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 0;
+  width: max(100vw, calc(100vh * 9 / 16)); height: auto; aspect-ratio: 9 / 16; }
+html.full .controls, html.full .bar { display: none; }
+html.full .txt { padding-inline: max(6cqw, calc((100cqw - 100vw) / 2 + 4cqw)); }
+html.full .txt > * { max-width: 100% !important; }
+.num.js-count::before { content: none; }
+.num.js-count .sr { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: nowrap; }
 </style>
 
 </head>
@@ -113,6 +123,9 @@ body { background: var(--page); color: var(--cream); font-family: var(--body); }
   </div>
 </main>
 
+<script>
+if (/[?&]full=1\b/.test(location.search)) document.documentElement.classList.add('full');
+</script>
 <script>
 (function () {
   // Everything that changes lives here. The venue is a placeholder until the family confirms it.
@@ -149,15 +162,41 @@ body { background: var(--page); color: var(--cream); font-family: var(--body); }
       s.textContent = ch === ' ' ? ' ' : ch; h.appendChild(s);
     });
   });
-  // Days to go: whole days, same method as the website.
-  var target = when.getTime(), now = Date.now(), days = Math.floor((target - now) / 864e5), cnt = document.getElementById('cnt');
-  if (days >= 1) {
+  // Days to go: calendar days in India time, so it matches the date on the invitation wherever the guest is.
+  var dp = EVENT.date.split('-'), ist = new Date(Date.now() + 19800000);
+  var days = Math.round((Date.UTC(+dp[0], dp[1] - 1, +dp[2]) - Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate())) / 864e5);
+  var cnt = document.getElementById('cnt');
+  if (days > 1) {
     document.getElementById('num').style.setProperty('--days', days);
     document.getElementById('numText').textContent = days;
-    document.getElementById('unit').textContent = days === 1 ? 'day to go' : 'days to go';
-  } else if (target > now) cnt.textContent = 'Tomorrow';
-  else if (now < target + 864e5) cnt.textContent = 'Today is the day';
+    document.getElementById('unit').textContent = 'days to go';
+  } else if (days === 1) cnt.textContent = 'Tomorrow';
+  else if (days === 0) cnt.textContent = 'Today is the day';
   else cnt.hidden = true;
+  // Count up in script (CSS counters driven by an animated property don't repaint reliably everywhere).
+  // The CSS "count" animation still sets the timing; the number itself is written into the text.
+  (function () {
+    var num = document.getElementById('num'), txt = document.getElementById('numText');
+    if (!(days > 1)) return;
+    num.classList.add('js-count');
+    var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { txt.textContent = days; return; }
+    txt.textContent = '0';
+    var started = false;
+    function run(ms) {
+      if (started) return; started = true;
+      var t0 = performance.now();
+      (function step(t) {
+        var k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+        txt.textContent = Math.round(days * e);
+        if (k < 1) requestAnimationFrame(step);
+      })(t0);
+    }
+    num.addEventListener('animationstart', function (ev) {
+      if (ev.animationName === 'count') run((parseFloat(getComputedStyle(num).animationDuration) || 1.6) * 1000);
+    });
+    setTimeout(function () { if (!started) txt.textContent = days; }, 15000); // fallback if the animation never runs
+  })();
 
   /* ---- playing cards fanned from the bottom centre ---- */
   var cards = document.getElementById('cards');

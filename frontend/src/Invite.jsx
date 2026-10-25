@@ -99,7 +99,6 @@ export function NikkahPublic() {
               </div>
             </li>
           </ol>
-          <p className="muted small">Looking for the other celebrations? <a href="/invite">See all the invitations</a>.</p>
         </section>
       </main>
       <footer className="footer">With love, {couple.title}</footer>
@@ -199,7 +198,7 @@ function Hero({ couple, featured, guestName, publicPage = false }) {
           <p className="hero-occasion">on the occasion of their {featured.name}</p>
           <p className="hero-date">{fmtDateLong(featured.date)}</p>
           <p className="hero-place">{featured.venue}</p>
-          <Countdown target={featured.date} label={`until the ${featured.name}`} />
+          <Countdown target={featured.date} time={featured.time} label={`until the ${featured.name}`} />
         </>
       )}
       {!publicPage && <p className="hero-greeting">Dear {guestName},</p>}
@@ -212,8 +211,21 @@ function Hero({ couple, featured, guestName, publicPage = false }) {
   )
 }
 
-function Countdown({ target, label }) {
-  const end = useMemo(() => new Date(`${target}T00:00:00`).getTime(), [target])
+// Event start in India time (+05:30), so every guest counts down to the same moment wherever they are.
+// "6:00 PM" style times are used; anything else ("Evening") counts to the start of that day.
+export function eventStart(date, time = '') {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\s*$/i.exec(time)
+  let hh = 0
+  let mm = 0
+  if (m) {
+    hh = (Number(m[1]) % 12) + (m[3].toLowerCase() === 'p' ? 12 : 0)
+    mm = Number(m[2] || 0)
+  }
+  return new Date(`${date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00+05:30`).getTime()
+}
+
+function Countdown({ target, time, label }) {
+  const end = useMemo(() => eventStart(target, time), [target, time])
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)

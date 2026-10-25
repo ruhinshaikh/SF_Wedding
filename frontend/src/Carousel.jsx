@@ -5,9 +5,23 @@ import { api, fmtDateLong } from './api.js'
 const FILM_SECONDS = 15 // the animated invitations finish their intro in about 14 seconds
 const CARD_SECONDS = 10
 
-const filmSrc = (e, couple) =>
+const filmSrc = (e, couple, full) =>
   `/films/${e.film}/index.html?` +
-  new URLSearchParams({ date: e.date, time: e.time || '', venue: e.venue || '', dress: e.dress_code ? `Dress code: ${e.dress_code}` : '', couple }).toString()
+  new URLSearchParams({ date: e.date, time: e.time || '', venue: e.venue || '', dress: e.dress_code ? `Dress code: ${e.dress_code}` : '', couple, ...(full ? { full: '1' } : {}) }).toString()
+
+// phones get the full-screen story layout
+const usePhone = () => {
+  const q = '(max-width: 600px)'
+  const [m, setM] = useState(() => window.matchMedia?.(q).matches ?? false)
+  useEffect(() => {
+    const mq = window.matchMedia?.(q)
+    if (!mq) return
+    const f = () => setM(mq.matches)
+    mq.addEventListener('change', f)
+    return () => mq.removeEventListener('change', f)
+  }, [])
+  return m
+}
 
 function NikkahCard({ e, couple }) {
   return (
@@ -36,6 +50,7 @@ export default function Carousel() {
   const [i, setI] = useState(0)
   const [playing, setPlaying] = useState(() => !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   const touch = useRef(null)
+  const phone = usePhone()
 
   useEffect(() => {
     api.publicInvite().then(setData).catch((e) => setError(e.message))
@@ -77,6 +92,20 @@ export default function Carousel() {
         touch.current = null
       }}
     >
+      {/* story-style progress: one bar per invitation, the current one fills while it plays */}
+      <div className="story-bars" aria-hidden="true">
+        {events.map((x, k) => (
+          <span key={x.id} className={`story-bar ${k < i ? 'done' : ''}`}>
+            {k === i && (
+              <span
+                key={`${i}-${playing}`}
+                className={`story-fill ${playing ? 'run' : ''}`}
+                style={{ '--dur': `${e.film ? FILM_SECONDS : CARD_SECONDS}s` }}
+              />
+            )}
+          </span>
+        ))}
+      </div>
       <header className="carousel-head">
         <p className="carousel-couple">{couple.title}</p>
         <h1 className="carousel-title">{e.name}</h1>
@@ -88,10 +117,13 @@ export default function Carousel() {
         <div className="carousel-slide" role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${n}: ${e.name}`}>
           {e.film ? (
             // key makes the film start from the beginning each time its slide is shown
-            <iframe key={`${e.id}-${i}`} className="carousel-frame" src={filmSrc(e, couple.title)} title={`${e.name} invitation`} allow="autoplay" />
+            <iframe key={`${e.id}-${i}-${phone}`} className="carousel-frame" src={filmSrc(e, couple.title, phone)} title={`${e.name} invitation`} allow="autoplay" />
           ) : (
             <NikkahCard e={e} couple={couple} />
           )}
+          {/* on phones: tap the left third to go back, anywhere else to go forward (taps can't reach through the film) */}
+          <button type="button" className="tap-zone prev" onClick={() => go(-1)} aria-label="Previous invitation" tabIndex={-1} />
+          <button type="button" className="tap-zone next" onClick={() => go(1)} aria-label="Next invitation" tabIndex={-1} />
         </div>
         <button className="carousel-arrow next" onClick={() => go(1)} aria-label="Next invitation">›</button>
       </div>
@@ -102,12 +134,12 @@ export default function Carousel() {
             <button key={x.id} className={`dot ${k === i ? 'on' : ''}`} onClick={() => setI(k)} aria-label={`Show ${x.name}`} aria-current={k === i ? 'true' : undefined} />
           ))}
         </div>
-        <button className="link-btn carousel-play" onClick={() => setPlaying((p) => !p)}>{playing ? 'Pause slideshow' : 'Play slideshow'}</button>
+        <button className="link-btn carousel-play" type="button" onClick={() => setPlaying((p) => !p)}>{playing ? 'Pause slideshow' : 'Play slideshow'}</button>
       </div>
       {e.map_url && e.film && (
         <p className="carousel-map"><a href={e.map_url} target="_blank" rel="noreferrer">Open {e.name} in Maps</a></p>
       )}
-      <p className="carousel-foot">Have a personal invitation? <a href="/login">Log in to reply</a></p>
+      <p className="carousel-foot"><span className="carousel-foot-q">Have a personal invitation? </span><a href="/login">Log in to reply</a></p>
     </main>
   )
 }

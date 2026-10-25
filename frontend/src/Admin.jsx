@@ -324,7 +324,7 @@ function Guests({ config }) {
       </p>
 
       <div className="table-wrap">
-        <table>
+        <table className="cards">
           <thead>
             <tr><th>Guest</th><th>Invited to</th><th>Reply</th><th>Invitation</th><th></th></tr>
           </thead>
@@ -661,7 +661,7 @@ function Vendors({ config }) {
     <div className="stack">
       <div className="toolbar"><button className="btn btn-rani" onClick={() => setEditing(blankVendor())}>Add vendor</button></div>
       <div className="table-wrap">
-        <table>
+        <table className="cards">
           <thead><tr><th>Vendor</th><th>Contact</th><th>Status</th><th>Cost</th><th></th></tr></thead>
           <tbody>
             {vendors.length === 0 && <tr><td colSpan="5" className="muted">No vendors yet. Add the venue, caterer, photographer and anyone else you're working with.</td></tr>}
