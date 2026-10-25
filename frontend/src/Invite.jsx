@@ -16,8 +16,10 @@ export default function Invite() {
   if (error)
     return (
       <main className="narrow center-page">
-        <h1 className="display">We can't find this invitation</h1>
+        <h1 className="display">We can't open this invitation</h1>
+        <p className="muted">{error}</p>
         <p className="muted">Check that the whole link was copied, or ask the family to send it again.</p>
+        <p><a className="link-btn" href="/login">Log in with a different number</a></p>
       </main>
     )
   if (!data) return <main className="narrow center-page muted">Loading your invitation…</main>
@@ -55,7 +57,7 @@ export function NikkahPublic() {
   const [config, setConfig] = useState(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    api.config().then(setConfig).catch((e) => setError(e.message))
+    api.publicInvite().then(setConfig).catch((e) => setError(e.message))
   }, [])
   if (error) return <main className="narrow center-page"><p className="error">{error}</p></main>
   if (!config) return <main className="narrow center-page muted">Loading…</main>
@@ -97,7 +99,7 @@ export function NikkahPublic() {
               </div>
             </li>
           </ol>
-          <p className="muted small">Looking for the other celebrations? <a href="/events">See the full schedule</a>.</p>
+          <p className="muted small">Looking for the other celebrations? <a href="/invite">See all the invitations</a>.</p>
         </section>
       </main>
       <footer className="footer">With love, {couple.title}</footer>

@@ -1,34 +1,62 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { adminToken, guestToken, isLoggedIn } from './api.js'
+import Login from './Login.jsx'
 import Invite, { NikkahPublic, Preview } from './Invite.jsx'
 import Admin from './Admin.jsx'
 import Schedule from './Schedule.jsx'
+import Carousel from './Carousel.jsx'
 import './styles.css'
 
 function Landing() {
+  const invites = guestToken.invites()
   return (
     <main className="narrow center-page">
-      <h1 className="display">You'll need your personal link</h1>
-      <p className="muted">
-        Each invitation has its own link. Open the one sent to you on WhatsApp, or ask the family to resend it.
-      </p>
-      <p><a className="link-btn" href="/events">See all events, dates and places</a></p>
+      <h1 className="display">Simran &amp; Farhan</h1>
+      <p className="muted lead">Welcome. Here is everything for the celebrations.</p>
+      <ul className="stack">
+        {invites.map((i) => (
+          <li key={i.token}>
+            <a className="btn btn-rani" href={`/i/${i.token}`}>Open the invitation{invites.length > 1 ? ` for ${i.name}` : ''}</a>
+          </li>
+        ))}
+        <li><a className="link-btn" href="/events">All events, dates and places</a></li>
+        <li><a className="link-btn" href="/nikkah">The Nikkah invitation</a></li>
+        <li>
+          <button className="link-btn" onClick={() => { guestToken.clear(); adminToken.clear(); window.location.assign('/login') }}>Log out</button>
+        </li>
+      </ul>
     </main>
   )
+}
+
+// Every guest-facing page sits behind the mobile-number login (the admin's own login also works).
+function RequireLogin({ children }) {
+  const location = useLocation()
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const f = () => bump((n) => n + 1)
+    window.addEventListener('guest-logout', f)
+    return () => window.removeEventListener('guest-logout', f)
+  }, [])
+  if (!isLoggedIn()) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+  return children
 }
 
 createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/i/:token" element={<Invite />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/" element={<RequireLogin><Landing /></RequireLogin>} />
+      <Route path="/i/:token" element={<RequireLogin><Invite /></RequireLogin>} />
       <Route path="/nikkah" element={<NikkahPublic />} />
-      <Route path="/events" element={<Schedule />} />
-      <Route path="/schedule" element={<Schedule />} />
-      <Route path="/preview" element={<Preview />} />
+      <Route path="/invite" element={<Carousel />} />
+      <Route path="/events" element={<RequireLogin><Schedule /></RequireLogin>} />
+      <Route path="/schedule" element={<RequireLogin><Schedule /></RequireLogin>} />
+      <Route path="/preview" element={<RequireLogin><Preview /></RequireLogin>} />
       <Route path="/admin/*" element={<Admin />} />
-      <Route path="*" element={<Landing />} />
+      <Route path="*" element={<RequireLogin><Landing /></RequireLogin>} />
     </Routes>
   </BrowserRouter>,
 )

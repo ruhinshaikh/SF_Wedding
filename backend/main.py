@@ -92,6 +92,87 @@ def require_admin(request: Request, t: Optional[str] = Query(default=None)) -> N
         raise HTTPException(401, "Admin login required")
 
 
+# ---------------------------------------------------------------- guest login (phone number)
+# A guest proves who they are with the phone number on the guest list. The session token records the last
+# 10 digits of that number; an invitation link only opens for the number that belongs to it.
+
+
+def phone10(raw: str) -> str:
+    digits = "".join(c for c in raw if c.isdigit())
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+def make_guest_token(p10: str) -> str:
+    payload = f"g{p10}:{int(time.time()) + SESSION_SECONDS}"
+    sig = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
+
+
+def guest_session_phone(token: str) -> Optional[str]:
+    """The phone (last 10 digits) a valid guest token was issued for, else None."""
+    try:
+        payload, sig = base64.urlsafe_b64decode(token.encode()).decode().rsplit(".", 1)
+        good = hmac.new(_secret(), payload.encode(), hashlib.sha256).hexdigest()
+        who, expiry = payload.split(":", 1)
+        if hmac.compare_digest(sig, good) and who.startswith("g") and int(expiry) > time.time():
+            return who[1:]
+    except Exception:
+        pass
+    return None
+
+
+def bearer(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    return auth[7:] if auth.lower().startswith("bearer ") else ""
+
+
+def require_login(request: Request) -> Optional[str]:
+    """Any logged-in guest or the admin may continue. Returns the guest's phone, or None for the admin."""
+    token = bearer(request)
+    if token and valid_admin_token(token):
+        return None
+    p = guest_session_phone(token) if token else None
+    if not p:
+        raise HTTPException(401, "Please log in with your mobile number")
+    return p
+
+
+def require_invite_access(request: Request, guest: Guest) -> None:
+    """The guest's own number (or the admin) may open an invitation. Guests with no number on file can't be checked."""
+    p = require_login(request)
+    mine = phone10(guest.phone)
+    if p is not None and mine and p != mine:
+        raise HTTPException(403, "This invitation belongs to a different mobile number. Log in with the number it was sent to.")
+
+
+_login_misses: dict[str, list[float]] = {}
+
+
+class GuestLoginIn(BaseModel):
+    phone: str = Field(max_length=40)
+
+
+@app.post("/api/login")
+def guest_login(body: GuestLoginIn, request: Request, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    now_s = time.time()
+    misses = [t for t in _login_misses.get(ip, []) if now_s - t < 600]
+    if len(misses) >= 8:
+        raise HTTPException(429, "Too many tries. Please wait a few minutes and try again.")
+    p = phone10(body.phone)
+    matches = [g for g in db.scalars(select(Guest).order_by(Guest.name)).all() if p and phone10(g.phone) == p]
+    if not matches:
+        misses.append(now_s)
+        _login_misses[ip] = misses
+        raise HTTPException(404, "We couldn't find that number on the guest list. Use the number your invitation was sent to.")
+    _login_misses.pop(ip, None)
+    return {
+        "token": make_guest_token(p),
+        "name": matches[0].name,
+        "invites": [{"name": g.name, "token": g.token} for g in matches],
+    }
+
+
 class LoginIn(BaseModel):
     password: str
 
@@ -214,15 +295,31 @@ def guest_dict(g: Guest) -> dict:
 # ---------------------------------------------------------------- public: config + invitation + RSVP
 
 
+PUBLIC_EVENT_FIELDS = ("id", "name", "date", "time", "venue", "address", "map_url", "dress_code", "film")
+
+
+@app.get("/api/public/invite")
+def public_invite():
+    """No login: what the open invitation pages (/nikkah and the /invite carousel) show."""
+    cfg = load_config()
+    return {
+        "couple": cfg["couple"],
+        "events": [{k: e.get(k, "") for k in PUBLIC_EVENT_FIELDS} for e in cfg["events"]],
+    }
+
+
 @app.get("/api/config")
-def get_config():
+def get_config(request: Request):
+    require_login(request)
     return public_config(load_config())
 
 
-def guest_by_token(db: Session, token: str) -> Guest:
+def guest_by_token(db: Session, token: str, request: Optional[Request] = None) -> Guest:
     g = db.scalar(select(Guest).where(Guest.token == token))
     if not g:
         raise HTTPException(404, "Invitation not found")
+    if request is not None:
+        require_invite_access(request, g)
     return g
 
 
@@ -251,7 +348,9 @@ def mark_seen(g: Guest, request: Request, db: Session, new_visit: bool) -> None:
 
 @app.post("/api/invite/{token}/ping")
 def invite_ping(token: str, request: Request, db: Session = Depends(get_db)):
-    mark_seen(guest_by_token(db, token), request, db, new_visit=False)
+    g = guest_by_token(db, token, request)
+    if not valid_admin_token(bearer(request)):
+        mark_seen(g, request, db, new_visit=False)
     return {"ok": True}
 
 
@@ -268,8 +367,9 @@ def active_guests(db: Session = Depends(get_db)):
 
 @app.get("/api/invite/{token}")
 def get_invite(token: str, request: Request, db: Session = Depends(get_db)):
-    g = guest_by_token(db, token)
-    mark_seen(g, request, db, new_visit=True)
+    g = guest_by_token(db, token, request)
+    if not valid_admin_token(bearer(request)):  # the admin looking at an invitation isn't a guest visit
+        mark_seen(g, request, db, new_visit=True)
     cfg = load_config()
     return {
         "guest": {"name": g.name, "max_party": g.max_party, "events": g.events, "offer_stay": g.offer_stay},
@@ -279,9 +379,9 @@ def get_invite(token: str, request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/api/invite/{token}/groups")
-def invite_groups(token: str, db: Session = Depends(get_db)):
+def invite_groups(token: str, request: Request, db: Session = Depends(get_db)):
     """WhatsApp groups this guest can join. Only returned once they have said yes."""
-    g = guest_by_token(db, token)
+    g = guest_by_token(db, token, request)
     return {
         "groups": [
             {"id": grp["id"], "name": grp["name"], "url": grp["url"]}
@@ -317,8 +417,8 @@ class RsvpIn(BaseModel):
 
 
 @app.post("/api/invite/{token}/rsvp")
-def submit_rsvp(token: str, body: RsvpIn, db: Session = Depends(get_db)):
-    g = guest_by_token(db, token)
+def submit_rsvp(token: str, body: RsvpIn, request: Request, db: Session = Depends(get_db)):
+    g = guest_by_token(db, token, request)
     cfg = load_config()
     sangeet_ids = {e["id"] for e in cfg["events"] if e.get("is_sangeet")}
 

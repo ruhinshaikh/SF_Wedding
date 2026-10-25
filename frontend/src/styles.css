@@ -287,3 +287,32 @@ td { padding: 0.8rem 1rem; border-top: 1px solid var(--line); vertical-align: to
 
 .qr-card { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
 .qr-card img { background: #fff; border: 1px solid rgba(12, 42, 34, 0.15); border-radius: 8px; }
+
+/* ---------- public invitation carousel ---------- */
+.carousel { min-height: 100svh; background: var(--ink); color: #fff; display: flex; flex-direction: column; align-items: center; padding: 1.25rem 16px 1.5rem; gap: 0.75rem; }
+.carousel a { color: #f6d27a; }
+.carousel-head { text-align: center; }
+.carousel-couple { margin: 0; letter-spacing: 0.14em; text-transform: uppercase; font-size: 0.8rem; color: #f6d27a; }
+.carousel-title { font-family: var(--display); font-weight: 500; font-size: 2rem; margin: 0.15rem 0 0; }
+.carousel-when { margin: 0.1rem 0 0; opacity: 0.85; }
+.carousel-stage { display: flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%; }
+.carousel-slide { width: min(380px, 100%); height: min(680px, 72svh); display: flex; }
+.carousel-frame { width: 100%; height: 100%; border: 0; border-radius: 14px; background: #000; }
+.carousel-arrow { flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid rgba(246, 210, 122, 0.6); background: transparent; color: #f6d27a; font-size: 1.6rem; line-height: 1; cursor: pointer; }
+.carousel-arrow:hover { background: rgba(246, 210, 122, 0.12); }
+@media (max-width: 520px) { .carousel-arrow { display: none; } }
+.carousel-controls { display: flex; align-items: center; gap: 1rem; }
+.carousel-dots { display: flex; gap: 0.5rem; }
+.dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; border: 1px solid #f6d27a; background: transparent; padding: 0; cursor: pointer; }
+.dot.on { background: #f6d27a; }
+.carousel-play { color: #f6d27a; }
+.carousel-map, .carousel-foot { margin: 0; font-size: 0.9rem; opacity: 0.9; text-align: center; }
+.slide-card { width: 100%; height: 100%; overflow: auto; border-radius: 14px; border: 1px solid rgba(246, 210, 122, 0.45); background: radial-gradient(circle at 50% 0%, #17493b, #0c2a22 70%); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1.25rem 1rem; gap: 0.35rem; }
+.slide-card p { margin: 0; }
+.slide-tag { font-size: 0.85rem; opacity: 0.85; }
+.slide-arch { width: 62%; max-width: 210px; margin: 0.5rem 0; }
+.slide-names { font-family: var(--display); font-style: italic; font-weight: 500; font-size: 2rem; margin: 0.2rem 0; }
+.slide-occasion { color: #f6d27a; }
+.slide-date { font-family: var(--display); font-size: 1.2rem; }
+.slide-place { opacity: 0.9; margin-bottom: 0.6rem !important; }
+.carousel .btn-gold { color: var(--ink); }
