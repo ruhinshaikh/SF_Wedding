@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { adminToken, adminUrl, api, fmtDate } from './api.js'
+import { sameSong } from './songs.js'
 
 const TABS = [
   ['overview', 'Overview'],
@@ -541,6 +542,9 @@ function Songs() {
   if (!acts || !dg) return <p className="muted">Loading…</p>
 
   const reload = () => { reloadActs(); reloadGroups() }
+  // other acts that picked the same song
+  const clashes = (a, s) => acts.filter((o) => o.guest_id !== a.guest_id && o.songs.some((x) => sameSong(s, x))).map((o) => o.guest)
+  const clashCount = acts.reduce((n, a) => n + a.songs.filter((s) => clashes(a, s).length).length, 0)
   const groupName = Object.fromEntries(dg.groups.map((g) => [g.id, g.name]))
 
   async function create(e) {
@@ -608,6 +612,7 @@ function Songs() {
         ) : (
           <>
             <p className="muted">{acts.length} {acts.length === 1 ? 'dance' : 'dances'}, {acts.reduce((n, a) => n + a.songs.length, 0)} songs. Share this list with the DJ or choreographer.</p>
+            {clashCount > 0 && <p className="song-warn">⚠ Some songs are picked by more than one dance. They're marked below.</p>}
             {acts.map((a) => (
               <article key={a.guest_id} className="act">
                 <h3 className="act-name">
@@ -627,6 +632,7 @@ function Songs() {
                     <li key={i}>
                       {s.title || 'Untitled'}{' '}
                       {s.link && <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a>}
+                      {clashes(a, s).length > 0 && <span className="song-dup"> ⚠ also picked by {clashes(a, s).join(', ')}</span>}
                     </li>
                   ))}
                 </ul>

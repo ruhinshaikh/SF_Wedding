@@ -65,6 +65,7 @@ export const api = {
   ping: (token) => request(`/invite/${token}/ping`, { method: 'POST' }).catch(() => {}),
   active: () => request('/admin/active', { admin: true }),
   rsvp: (token, body) => request(`/invite/${token}/rsvp`, { method: 'POST', body }),
+  songsTaken: (token) => request(`/invite/${token}/songs-taken`),
   inviteGroups: (token) => request(`/invite/${token}/groups`),
   login: (password) => request('/admin/login', { method: 'POST', body: { password } }),
   config: () => request('/config'),

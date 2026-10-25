@@ -64,3 +64,9 @@ it holds the SQLite database. Back it up before the wedding.
 By default the app keeps everything in a SQLite file (`backend/data/wedding.db`). To use Supabase (or any Postgres) instead, set
 `DATABASE_URL` to its connection string. On Supabase use the **Session pooler** string (Project > Connect), with your password filled in.
 The tables are created automatically on first start.
+
+## Hosting checklist
+
+- Health check path: `/api/health` (the other API routes need a login).
+- On a real server the app refuses to start unless `SECRET_KEY` is set to a long random value and `ADMIN_PASSWORD` has at least 8 characters.
+- Set `PUBLIC_URL` to the site's address so invitation and WhatsApp links point to it.

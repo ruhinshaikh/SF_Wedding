@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, dayParts, fmtDateLong } from './api.js'
+import { sameSong, songLabel } from './songs.js'
 
 const emptySong = () => ({ title: '', link: '' })
 
@@ -412,6 +413,9 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
   const [danceNotes, setDanceNotes] = useState(existing?.dance_notes || '')
   const [songs, setSongs] = useState(existing?.songs?.length ? existing.songs : [emptySong()])
   const [status, setStatus] = useState(existing ? 'saved' : 'idle') // idle | sending | saved
+  // songs other guests have already picked, so nobody dances to the same song twice
+  const [taken, setTaken] = useState([])
+  const [dupOk, setDupOk] = useState(false)
   const [error, setError] = useState('')
   const errRef = useRef(null)
 
@@ -427,7 +431,23 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
     }
     setStatus((st) => (st === 'saved' ? 'idle' : st))
   }, [answers])
-  const setSong = (i, patch) => setSongs((s) => s.map((x, idx) => (idx === i ? { ...x, ...patch } : x)))
+  const setSong = (i, patch) => {
+    setDupOk(false)
+    setSongs((s) => s.map((x, idx) => (idx === i ? { ...x, ...patch } : x)))
+  }
+
+  useEffect(() => {
+    if (preview || !sangeetAttending || wantsDance !== true) return
+    api.songsTaken(token).then((r) => setTaken(r.songs)).catch(() => {})
+  }, [token, preview, sangeetAttending, wantsDance])
+
+  // for each of this guest's songs: picked by someone else, or entered twice here
+  const songWarnings = songs.map((s, i) => {
+    if (!s.title.trim() && !s.link.trim()) return ''
+    if (taken.some((t) => sameSong(s, t))) return 'Someone has already picked this song for their dance. You can keep it, but a different song might be better.'
+    if (songs.some((o, j) => j < i && sameSong(s, o))) return "You've added this song twice."
+    return ''
+  })
 
   async function submit(ev) {
     ev.preventDefault()
@@ -441,6 +461,10 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
       return fail('Add at least one song, either a link or a title.')
     if (sangeetAttending && wantsDance && filled.some((s) => s.link.trim() && !/^https?:\/\//i.test(s.link.trim())))
       return fail('Song links need to start with http:// or https://')
+    if (sangeetAttending && wantsDance && songWarnings.some(Boolean) && !dupOk) {
+      setDupOk(true) // a second press sends anyway
+      return fail('Some of your songs are already taken (see the notes under them). Change them, or press send again to keep them.')
+    }
 
     if (preview) {
       setStatus('saved')
@@ -531,8 +555,22 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
               <div>
                 <p className="label">Songs for your dance</p>
                 <p className="muted small">Paste a YouTube, Spotify or any music link. Add a title if you like.</p>
+                {taken.length > 0 && (
+                  <details className="taken-songs">
+                    <summary>Songs other guests have already picked ({taken.length})</summary>
+                    <ul>
+                      {taken.map((t, k) => (
+                        <li key={k}>
+                          {songLabel(t)}
+                          {t.link && <> <a href={t.link} target="_blank" rel="noreferrer noopener">Listen</a></>}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {songs.map((s, i) => (
-                  <div className="song-row" key={i}>
+                  <div key={i}>
+                  <div className="song-row">
                     <input aria-label={`Song ${i + 1} title`} value={s.title} onChange={(e) => setSong(i, { title: e.target.value })} placeholder="Song title" maxLength={200} />
                     <input aria-label={`Song ${i + 1} link`} value={s.link} onChange={(e) => setSong(i, { link: e.target.value })} placeholder="https://…" inputMode="url" maxLength={500} />
                     {songs.length > 1 && (
@@ -540,6 +578,8 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
                         ×
                       </button>
                     )}
+                  </div>
+                  {songWarnings[i] && <p className="song-warn" role="status">⚠ {songWarnings[i]}</p>}
                   </div>
                 ))}
                 {songs.length < 5 && (

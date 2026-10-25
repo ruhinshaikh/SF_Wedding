@@ -70,7 +70,7 @@ class Guest(Base):
     dance_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Sangeet dance group set by the admin
 
     rsvp: Mapped["Rsvp | None"] = relationship(
-        back_populates="guest", uselist=False, cascade="all, delete-orphan"
+        back_populates="guest", uselist=False, cascade="all, delete-orphan", lazy="selectin"
     )
 
 

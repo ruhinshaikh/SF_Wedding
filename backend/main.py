@@ -20,6 +20,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -34,6 +35,7 @@ DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "91")
 SESSION_SECONDS = 60 * 60 * 24 * 14
 
 app = FastAPI(title="Wedding Invitation API")
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")],
@@ -44,7 +46,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup() -> None:
+    _check_production_settings()
     init_db()
+
+
+@app.get("/api/health")
+def health():
+    """For the host's health check (no login needed)."""
+    return {"ok": True}
 
 
 def get_db():
@@ -68,6 +77,16 @@ def event_ids() -> list[str]:
 
 def _secret() -> bytes:
     return os.getenv("SECRET_KEY", "dev-secret-change-me").encode()
+
+
+def _check_production_settings() -> None:
+    """On a real server, refuse to start with the built-in secret: anyone could forge an admin login with it."""
+    public = os.getenv("PUBLIC_URL", "")
+    is_local = not public or "localhost" in public or "127.0.0.1" in public
+    if not is_local and os.getenv("SECRET_KEY", "dev-secret-change-me") in ("", "dev-secret-change-me", "change-me-too"):
+        raise RuntimeError("Set SECRET_KEY to a long random value (python -c \"import secrets;print(secrets.token_hex(32))\").")
+    if not is_local and len(os.getenv("ADMIN_PASSWORD", "")) < 8:
+        raise RuntimeError("Set ADMIN_PASSWORD to at least 8 characters.")
 
 
 def make_admin_token() -> str:
@@ -389,6 +408,22 @@ def invite_groups(token: str, request: Request, db: Session = Depends(get_db)):
             if grp.get("url") and in_group(g, grp)
         ]
     }
+
+
+@app.get("/api/invite/{token}/songs-taken")
+def songs_taken(token: str, request: Request, db: Session = Depends(get_db)):
+    """Songs other guests picked for their Sangeet dance (titles and links only, no names)."""
+    me = guest_by_token(db, token, request)
+    seen, out = set(), []
+    for g in db.scalars(select(Guest)).all():
+        if g.id == me.id or not (g.rsvp and g.rsvp.wants_to_dance):
+            continue
+        for s in g.rsvp.songs or []:
+            key = (s.get("title", "").strip().lower(), s.get("link", "").strip().lower())
+            if key not in seen:
+                seen.add(key)
+                out.append({"title": s.get("title", ""), "link": s.get("link", "")})
+    return {"songs": out}
 
 
 class EventAnswer(BaseModel):
@@ -907,14 +942,27 @@ def delete_vendor(vid: int, db: Session = Depends(get_db)):
 
 # ---------------------------------------------------------------- serve built frontend (single-process deploy)
 
+class CachedStatic(StaticFiles):
+    """Vite gives built files content-hashed names, so browsers may keep them for a year."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if resp.status_code == 200:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    DIST_ROOT = FRONTEND_DIST.resolve()
+    app.mount("/assets", CachedStatic(directory=FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
     def spa(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(404)
-        candidate = FRONTEND_DIST / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        # resolve and make sure the file is inside the built site, so "../" can't reach other files on the server
+        candidate = (DIST_ROOT / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(DIST_ROOT):
+            # images, films and music change rarely: cache for a day; the page itself is never cached
+            return FileResponse(candidate, headers={"Cache-Control": "public, max-age=86400"})
+        return FileResponse(DIST_ROOT / "index.html", headers={"Cache-Control": "no-cache"})

@@ -21,6 +21,28 @@ export default function Music() {
     }
   }, [])
 
+  // pause when the visitor leaves the site (switches tab or app, locks the phone), resume when they come back
+  useEffect(() => {
+    if (!audio) return
+    let resume = false
+    const onVis = () => {
+      if (document.hidden) {
+        resume = !audio.paused
+        pauseMusic()
+      } else if (resume && !musicOff() && !window.location.pathname.startsWith('/admin')) {
+        resume = false
+        playMusic().catch(() => {})
+      }
+    }
+    const onLeave = () => pauseMusic()
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('pagehide', onLeave)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pagehide', onLeave)
+    }
+  }, [])
+
   useEffect(() => {
     if (hidden) {
       pauseMusic()

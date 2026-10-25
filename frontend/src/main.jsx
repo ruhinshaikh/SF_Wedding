@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react'
+import React, { Suspense, lazy, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { adminToken, guestToken, isLoggedIn } from './api.js'
 import Login from './Login.jsx'
 import Invite, { NikkahPublic, Preview } from './Invite.jsx'
-import Admin from './Admin.jsx'
-import Schedule from './Schedule.jsx'
-import Carousel from './Carousel.jsx'
+// loaded only when needed, so guests don't download the admin screens
+const Admin = lazy(() => import('./Admin.jsx'))
+const Schedule = lazy(() => import('./Schedule.jsx'))
+const Carousel = lazy(() => import('./Carousel.jsx'))
 import Music from './Music.jsx'
 import SiteNav from './SiteNav.jsx'
 import Opening from './Opening.jsx'
@@ -51,6 +52,7 @@ createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <Music />
     <SiteNav />
+    <Suspense fallback={<main className="narrow center-page muted">Loading…</main>}>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<RequireLogin><Landing /></RequireLogin>} />
@@ -63,5 +65,6 @@ createRoot(document.getElementById('root')).render(
       <Route path="/admin/*" element={<Admin />} />
       <Route path="*" element={<RequireLogin><Landing /></RequireLogin>} />
     </Routes>
+    </Suspense>
   </BrowserRouter>,
 )
