@@ -1,0 +1,86 @@
+{
+  "couple": {
+    "title": "Simran & Farhan",
+    "tagline": "Together with our families, we invite you to celebrate",
+    "hosted_by": "The families of Simran and Farhan",
+    "welcome_note": "Your presence will make our celebrations complete. Please let us know if you can join us.",
+    "hero_photo": "/nikkah.jpg",
+    "featured_event": "nikkah"
+  },
+  "rsvp_deadline": "2026-12-10",
+  "events": [
+    {
+      "id": "mehendi",
+      "name": "Mehendi",
+      "date": "2026-12-22",
+      "time": "Evening",
+      "venue": "Venue to be confirmed",
+      "address": "Update address here",
+      "map_url": "",
+      "dress_code": "",
+      "is_sangeet": false,
+      "film": "mehendi"
+    },
+    {
+      "id": "sangeet",
+      "name": "Sangeet",
+      "date": "2026-12-23",
+      "time": "5:00 PM",
+      "venue": "Venue to be confirmed",
+      "address": "Update address here",
+      "map_url": "",
+      "dress_code": "Sparkly, wear something that shines",
+      "is_sangeet": true,
+      "film": "sangeet"
+    },
+    {
+      "id": "haldi",
+      "name": "Haldi",
+      "date": "2026-12-24",
+      "time": "11:00 AM",
+      "venue": "Venue to be confirmed",
+      "address": "Update address here",
+      "map_url": "",
+      "dress_code": "Pink, and nothing you mind getting stained",
+      "is_sangeet": false,
+      "film": "haldi"
+    },
+    {
+      "id": "gamenight",
+      "name": "Game Night",
+      "date": "2026-12-24",
+      "time": "7:00 PM",
+      "venue": "Venue to be confirmed",
+      "address": "Update address here",
+      "map_url": "",
+      "dress_code": "",
+      "is_sangeet": false,
+      "film": "gamenight"
+    },
+    {
+      "id": "nikkah",
+      "name": "Nikkah",
+      "date": "2026-12-25",
+      "time": "6:00 PM",
+      "venue": "Vasai",
+      "address": "",
+      "map_url": "https://share.google/KLZCfrdtIkNNvs9T8",
+      "dress_code": "",
+      "is_sangeet": false
+    }
+  ],
+  "whatsapp_groups": [
+    {
+      "id": "wedding",
+      "name": "Simran & Farhan's wedding",
+      "url": "",
+      "for": "all"
+    },
+    {
+      "id": "sangeet",
+      "name": "the Sangeet",
+      "url": "https://chat.whatsapp.com/DDTPDIfoSbrAZFR6zId5Ze?mode=gi_t",
+      "for": "sangeet"
+    }
+  ]
+}

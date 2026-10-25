@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Game Night film</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Figtree:wght@400;500;600&display=swap">
+<style>
+/* One 9:16 stage. Top: a fan of cards and two dice. Bottom: the invitation text. One bright night look: midnight blue with coral, yellow and teal. */
+:root {
+  --page: #090c1d; --cream: #f4f6ff; --coral: #ff5e5b; --yellow: #ffd23f; --teal: #2ec4b6;
+  --display: 'Bungee', Impact, 'Arial Black', sans-serif;
+  --body: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+@property --d { syntax: '<integer>'; inherits: false; initial-value: 0; }
+html, body { height: 100%; }
+body { background: var(--page); color: var(--cream); font-family: var(--body); }
+.frame { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.stage { position: relative; overflow: hidden; container-type: size; border-radius: 14px; width: min(100%, calc((100svh - 90px) * 9 / 16)); aspect-ratio: 9 / 16; background: radial-gradient(ellipse at 50% 30%, #2b3a9a 0%, #17205a 45%, #0a0f26 100%); color: var(--cream); }
+.controls { display: flex; gap: 8px; }
+.controls button { min-height: 44px; padding: 0 22px; border-radius: 999px; cursor: pointer; font: 500 15px var(--body); color: var(--cream); background: transparent; border: 1px solid rgba(255, 210, 63, 0.6); }
+.controls button:hover { border-color: var(--yellow); color: #fff; }
+.controls button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+.stage.done ~ .controls .again { background: var(--yellow); color: #1a1d40; border-color: var(--yellow); }
+.art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bar { position: absolute; z-index: 9; top: 0; left: 0; right: 0; height: 3px; background: rgba(244, 246, 255, 0.15); }
+.bar i { display: block; height: 100%; background: var(--yellow); transform-origin: left; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.txt { position: absolute; z-index: 2; left: 0; right: 0; top: 104cqw; bottom: 0; padding-inline: 6cqw; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.txt p, .txt h1, .txt h2 { margin: 0; }
+.kicker { font-size: 3.8cqw; color: #b9c3f5; }
+.event { margin-top: 1cqw !important; font: 400 12.5cqw/1.05 var(--display); color: var(--yellow); white-space: nowrap; text-shadow: 0.7cqw 0.7cqw 0 var(--coral); }
+.names { margin-top: 2cqw !important; font: 400 5.6cqw/1.15 var(--display); white-space: nowrap; letter-spacing: 0.04em; }
+.rule { width: 18cqw; height: 0.7cqw; margin: 2.4cqw auto 0; background: var(--teal); border-radius: 1cqw; }
+.when { margin-top: 2.2cqw !important; font: 600 4.5cqw/1.2 var(--body); }
+.where { margin-top: 0.5cqw !important; font: 500 4.2cqw/1.2 var(--body); color: #b9c3f5; }
+.ask { margin-top: 2.4cqw !important; max-width: 76cqw; font: 600 3.9cqw/1.35 var(--body); color: var(--teal); }
+.cnt { margin-top: 2.6cqw !important; display: flex; align-items: baseline; justify-content: center; gap: 1.6cqw; font-size: 3.8cqw; color: #b9c3f5; }
+.num { --days: 58; --d: var(--days); font: 400 8cqw/1 var(--display); color: var(--coral); font-variant-numeric: tabular-nums; }
+.num::before { counter-reset: d var(--d); content: counter(d); }
+.ch { display: inline-block; }
+.ch.amp { color: var(--coral); }
+
+/* the art: base CSS is the finished frame */
+.art .card, .art .die, .art .conf, .art .star { transform-box: fill-box; transform-origin: center; }
+.art .card { transform-box: view-box; transform-origin: 50px 92px; }
+.art .die-a { transform: rotate(-12deg); }
+.art .die-b { transform: rotate(14deg); }
+.art .conf { display: none; }
+.play .art .conf { display: block; }
+
+.play .bar i { animation: bar 12s linear both; }
+.paused *, .paused *::before, .paused *::after { animation-play-state: paused !important; }
+.play .glow { animation: pulse 3s ease-in-out infinite alternate; }
+.play .card { animation: fan 0.9s cubic-bezier(0.2, 1.3, 0.4, 1) calc(0.3s + var(--k) * 0.22s) both; }
+.play .die-a { animation: drop-a 1.4s cubic-bezier(0.3, 1.2, 0.5, 1) 1.5s both, rock 1.8s ease-in-out 3s infinite alternate; }
+.play .die-b { animation: drop-b 1.4s cubic-bezier(0.3, 1.2, 0.5, 1) 1.8s both, rock-b 2.1s ease-in-out 3.2s infinite alternate; }
+.play .conf { animation: confetti var(--t) linear var(--dl) infinite; }
+.play .star { animation: tw 1.6s ease-in-out calc(var(--k) * 0.2s) infinite; }
+.play .kicker { animation: fade-up 0.8s ease-out 3.4s both; }
+.play .event .ch { animation: bounce-in 0.7s cubic-bezier(0.3, 1.6, 0.5, 1) calc(3.7s + var(--i) * 80ms) both; }
+.play .names .ch { animation: ch-in 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) calc(4.9s + var(--i) * 50ms) both; }
+.play .rule { animation: grow 0.8s ease-out 6s both; }
+.play .when { animation: fade-up 0.8s ease-out 6.2s both; }
+.play .where { animation: fade-up 0.8s ease-out 6.5s both; }
+.play .ask { animation: fade-up 0.8s ease-out 7s both; }
+.play .cnt { animation: fade-up 0.8s ease-out 7.6s both; }
+.play .num { animation: count 1.6s ease-out 7.9s both; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(2.4cqw); } to { opacity: 1; transform: none; } }
+@keyframes bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes count { from { --d: 0; } to { --d: var(--days); } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ch-in { from { opacity: 0; transform: translateY(40%); filter: blur(0.8cqw); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes bounce-in { from { opacity: 0; transform: translateY(-60%) scale(0.6); } to { opacity: 1; transform: none; } }
+@keyframes pulse { from { opacity: 0.5; transform: scale(0.95); } to { opacity: 0.95; transform: scale(1.05); } }
+@keyframes fan { from { transform: rotate(0deg); opacity: 0; } to { opacity: 1; transform: rotate(var(--a)); } }
+@keyframes drop-a { 0% { transform: translateY(-120px) rotate(-420deg); opacity: 0; } 30% { opacity: 1; } 100% { transform: rotate(-12deg); opacity: 1; } }
+@keyframes drop-b { 0% { transform: translateY(-120px) rotate(480deg); opacity: 0; } 30% { opacity: 1; } 100% { transform: rotate(14deg); opacity: 1; } }
+@keyframes rock { from { transform: rotate(-12deg) translateY(0); } to { transform: rotate(-6deg) translateY(-2px); } }
+@keyframes rock-b { from { transform: rotate(14deg) translateY(0); } to { transform: rotate(8deg) translateY(-2px); } }
+@keyframes tw { 0%, 100% { opacity: 0; transform: scale(0.2); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes confetti { 0% { transform: translate(0, -10px) rotate(0); opacity: 0; } 8% { opacity: 1; } 100% { transform: translate(var(--dx), 190px) rotate(520deg); opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+</style>
+
+</head>
+<body>
+<main class="frame">
+  <section class="stage" id="stage" aria-label="Game Night invitation for Simran and Farhan">
+    <div class="bar" aria-hidden="true"><i></i></div>
+    <svg class="art" id="art" viewBox="0 0 100 177.78" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <circle class="glow" cx="50" cy="56" r="42" fill="#5b6dff" opacity="0.35" style="transform-box: fill-box; transform-origin: center"/>
+      <g id="stars"></g>
+      <g id="cards"></g>
+      <g id="dice"></g>
+      <g id="conf"></g>
+    </svg>
+    <div class="txt">
+      <p class="kicker" id="kicker"></p>
+      <h1 class="event" id="event" data-split></h1>
+      <h2 class="names" id="names" data-split></h2>
+      <div class="rule" aria-hidden="true"></div>
+      <p class="when" id="when"></p>
+      <p class="where" id="where"></p>
+      <p class="ask" id="ask"></p>
+      <p class="cnt" id="cnt"><span class="num" id="num"><span class="sr" id="numText">58</span></span> <span id="unit">days to go</span></p>
+    </div>
+  </section>
+  <div class="controls">
+    <button type="button" id="pause" aria-pressed="false">Pause</button>
+    <button type="button" id="again" class="again">Watch again</button>
+  </div>
+</main>
+
+<script>
+(function () {
+  // Everything that changes lives here. The venue is a placeholder until the family confirms it.
+  var EVENT = {
+    kicker: 'Come ready to play',
+    name: 'Game Night',
+    couple: 'Simran & Farhan',
+    date: '2026-12-24',
+    time: '7:00 PM',
+    venue: 'Venue to be confirmed',
+    ask: 'Teams, snacks and bragging rights.'
+  };
+  (function () {
+    var q = new URLSearchParams(location.search);
+    ['date', 'time', 'venue', 'dress', 'couple'].forEach(function (k) { if (q.get(k)) EVENT[k] = q.get(k); });
+  })();
+  var NS = 'http://www.w3.org/2000/svg';
+  var stage = document.getElementById('stage'), pauseBtn = document.getElementById('pause'), againBtn = document.getElementById('again');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function svg(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function html(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
+
+  var when = new Date(EVENT.date + 'T00:00:00');
+  document.getElementById('kicker').textContent = EVENT.kicker;
+  document.getElementById('event').textContent = EVENT.name;
+  document.getElementById('names').textContent = EVENT.couple;
+  document.getElementById('when').textContent = when.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  document.getElementById('where').textContent = EVENT.time + '  ·  ' + EVENT.venue;
+  document.getElementById('ask').textContent = EVENT.ask;
+  document.querySelectorAll('[data-split]').forEach(function (h) {
+    var text = h.textContent; h.setAttribute('aria-label', text); h.textContent = '';
+    Array.from(text).forEach(function (ch, idx) {
+      var s = html('span', ch === '&' ? 'ch amp' : 'ch'); s.setAttribute('aria-hidden', 'true'); s.style.setProperty('--i', idx);
+      s.textContent = ch === ' ' ? ' ' : ch; h.appendChild(s);
+    });
+  });
+  // Days to go: whole days, same method as the website.
+  var target = when.getTime(), now = Date.now(), days = Math.floor((target - now) / 864e5), cnt = document.getElementById('cnt');
+  if (days >= 1) {
+    document.getElementById('num').style.setProperty('--days', days);
+    document.getElementById('numText').textContent = days;
+    document.getElementById('unit').textContent = days === 1 ? 'day to go' : 'days to go';
+  } else if (target > now) cnt.textContent = 'Tomorrow';
+  else if (now < target + 864e5) cnt.textContent = 'Today is the day';
+  else cnt.hidden = true;
+
+  /* ---- playing cards fanned from the bottom centre ---- */
+  var cards = document.getElementById('cards');
+  var suits = [['♠', '#1b1f4b'], ['♥', '#e63946'], ['♦', '#e63946'], ['♣', '#1b1f4b'], ['♥', '#e63946']];
+  var angles = [-34, -17, 0, 17, 34];
+  suits.forEach(function (st, i) {
+    var g = svg('g', { class: 'card', style: '--k:' + i + ';--a:' + angles[i] + 'deg;transform:rotate(' + angles[i] + 'deg)' }, cards);
+    svg('rect', { x: 38, y: 36, width: 24, height: 34, rx: 2.4, fill: '#fffdf5', stroke: '#c9ccea', 'stroke-width': 0.4 }, g);
+    var t1 = svg('text', { x: 41.2, y: 43, 'font-size': 6, fill: st[1], 'font-family': 'Arial, sans-serif', 'font-weight': 700 }, g); t1.textContent = ['A', 'K', 'Q', 'J', '10'][i];
+    var t2 = svg('text', { x: 50, y: 58, 'font-size': 14, 'text-anchor': 'middle', fill: st[1], 'font-family': 'Arial, sans-serif' }, g); t2.textContent = st[0];
+  });
+
+  /* ---- two dice ---- */
+  var dice = document.getElementById('dice');
+  var pipPos = { 3: [[-5, -5], [0, 0], [5, 5]], 5: [[-5, -5], [5, -5], [0, 0], [-5, 5], [5, 5]], 6: [[-5, -5], [5, -5], [-5, 0], [5, 0], [-5, 5], [5, 5]] };
+  [['die die-a', 31, 76, 6, '#ff5e5b'], ['die die-b', 69, 80, 5, '#ffd23f']].forEach(function (d) {
+    var g = svg('g', { class: d[0] }, dice);
+    svg('rect', { x: d[1] - 11, y: d[2] - 11, width: 22, height: 22, rx: 4, fill: d[4], stroke: 'rgba(0,0,0,0.25)', 'stroke-width': 0.5 }, g);
+    pipPos[d[3]].forEach(function (p) { svg('circle', { cx: d[1] + p[0], cy: d[2] + p[1], r: 1.7, fill: d[4] === '#ffd23f' ? '#1b1f4b' : '#fff' }, g); });
+  });
+
+  /* ---- twinkling stars and falling confetti ---- */
+  var stars = document.getElementById('stars');
+  [[10, 14], [88, 12], [20, 34], [80, 30], [6, 58], [94, 52], [14, 86], [90, 88], [50, 10]].forEach(function (p, i) {
+    var z = 1.6 + (i % 3) * 0.6;
+    svg('path', { class: 'star', fill: i % 2 ? '#ffd23f' : '#ffffff', style: '--k:' + i, d: 'M' + p[0] + ' ' + (p[1] - z) + ' L' + (p[0] + z * 0.3) + ' ' + (p[1] - z * 0.3) + ' L' + (p[0] + z) + ' ' + p[1] + ' L' + (p[0] + z * 0.3) + ' ' + (p[1] + z * 0.3) + ' L' + p[0] + ' ' + (p[1] + z) + ' L' + (p[0] - z * 0.3) + ' ' + (p[1] + z * 0.3) + ' L' + (p[0] - z) + ' ' + p[1] + ' L' + (p[0] - z * 0.3) + ' ' + (p[1] - z * 0.3) + ' Z' }, stars);
+  });
+  var conf = document.getElementById('conf'), cc = ['#ff5e5b', '#ffd23f', '#2ec4b6', '#ffffff', '#7b8cff'];
+  for (var q = 0; q < 26; q++) {
+    svg('rect', { class: 'conf', x: (q * 37 + 6) % 96, y: 0, width: 1.6 + (q % 3) * 0.5, height: 0.9 + (q % 2) * 0.5, rx: 0.2, fill: cc[q % 5], style: '--dx:' + (((q % 2) ? 1 : -1) * (3 + (q % 4) * 2)) + 'px;--dl:' + (2.6 + ((q * 0.6) % 6)).toFixed(1) + 's;--t:' + (6 + (q % 4)) + 's' }, conf);
+  }
+
+  function play() {
+    stage.classList.remove('play', 'paused', 'done'); void stage.offsetWidth;
+    pauseBtn.setAttribute('aria-pressed', 'false'); pauseBtn.textContent = 'Pause';
+    if (!reduce) stage.classList.add('play');
+  }
+  pauseBtn.addEventListener('click', function () {
+    var p = stage.classList.toggle('paused'); pauseBtn.setAttribute('aria-pressed', String(p)); pauseBtn.textContent = p ? 'Play' : 'Pause';
+  });
+  againBtn.addEventListener('click', play);
+  stage.querySelector('.bar i').addEventListener('animationend', function () { stage.classList.add('done'); });
+  if (reduce) { pauseBtn.hidden = true; againBtn.hidden = true; }
+  play();
+})();
+</script>
+</body>
+</html>

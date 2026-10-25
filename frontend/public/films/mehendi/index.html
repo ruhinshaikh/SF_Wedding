@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mehendi invitation film</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@1,600&family=Figtree:wght@400;500;600&display=swap">
+<style>
+/* One 9:16 stage. Henna vines draw themselves around the edges, the bride appears showing her mehndi hands, gold sparkles
+   glow on her palms, petals drift, then the invitation text arrives. Single look: deep green, gold, henna orange. */
+:root {
+  --page: #07140d; --cream: #fff6df; --gold: #f1cf78; --henna: #e39a55; --leaf: #2f8a5a;
+  --display: 'Bodoni Moda', Georgia, 'Times New Roman', serif;
+  --body: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+@property --d { syntax: '<integer>'; inherits: false; initial-value: 0; }
+html, body { height: 100%; }
+body { background: var(--page); color: var(--cream); font-family: var(--body); }
+.frame { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.stage { position: relative; overflow: hidden; container-type: size; border-radius: 14px; width: min(100%, calc((100svh - 90px) * 9 / 16)); aspect-ratio: 9 / 16; background: radial-gradient(ellipse at 50% 32%, #2a7d52 0%, #14452d 48%, #082016 100%); color: var(--cream); }
+.controls { display: flex; gap: 8px; }
+.controls button { min-height: 44px; padding: 0 22px; border-radius: 999px; cursor: pointer; font: 500 15px var(--body); color: var(--cream); background: transparent; border: 1px solid rgba(241, 207, 120, 0.6); }
+.controls button:hover { border-color: var(--gold); color: #fff; }
+.controls button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.stage.done ~ .controls .again { background: var(--gold); color: #10301f; border-color: var(--gold); }
+.art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bar { position: absolute; z-index: 9; top: 0; left: 0; right: 0; height: 3px; background: rgba(255, 246, 223, 0.15); }
+.bar i { display: block; height: 100%; background: var(--gold); transform-origin: left; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.scrim { position: absolute; z-index: 1; left: 0; right: 0; top: 98cqw; bottom: 0; background: linear-gradient(180deg, rgba(8, 32, 22, 0) 0%, rgba(8, 32, 22, 0.9) 22%, #082016 100%); }
+.petals { position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
+.petals span { position: absolute; left: var(--x); top: -6cqw; width: var(--w); height: calc(var(--w) * 1.35); border-radius: 100% 0 100% 0; background: var(--c); opacity: 0; }
+.txt { position: absolute; z-index: 2; left: 0; right: 0; top: 112cqw; bottom: 0; padding-inline: 6cqw; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.txt p, .txt h1, .txt h2 { margin: 0; }
+.kicker { font-size: 3.8cqw; color: #cfe6d8; }
+.event { margin-top: 0.5cqw !important; font: italic 600 15cqw/1.05 var(--display); color: var(--gold); white-space: nowrap; text-shadow: 0 0 3cqw rgba(227, 154, 85, 0.55); }
+.names { margin-top: 0.8cqw !important; font: italic 600 6.4cqw/1.15 var(--display); white-space: nowrap; }
+.rule { width: 18cqw; height: 0.5cqw; margin: 2.2cqw auto 0; background: var(--henna); border-radius: 1cqw; }
+.when { margin-top: 2.2cqw !important; font: 600 4.5cqw/1.2 var(--body); }
+.where { margin-top: 0.5cqw !important; font: 500 4.2cqw/1.2 var(--body); color: #cfe6d8; }
+.cnt { margin-top: 2.6cqw !important; display: flex; align-items: baseline; justify-content: center; gap: 1.6cqw; font-size: 3.8cqw; color: #cfe6d8; }
+.num { --days: 58; --d: var(--days); font: italic 600 8.5cqw/1 var(--display); color: var(--gold); font-variant-numeric: tabular-nums; }
+.num::before { counter-reset: d var(--d); content: counter(d); }
+.ch { display: inline-block; }
+.ch.amp { color: var(--henna); }
+
+.art .vine { fill: none; stroke: var(--henna); stroke-width: 0.7; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.art .leaf, .art .palm-glow, .art .sparkle, .art .dot { transform-box: fill-box; transform-origin: center; }
+
+.play .bar i { animation: bar 12s linear both; }
+.paused *, .paused *::before, .paused *::after { animation-play-state: paused !important; }
+.play .vine { animation: draw 2.2s ease-in-out calc(var(--k) * 0.25s) both; }
+.play .leaf { animation: pop 0.6s cubic-bezier(0.3, 1.6, 0.5, 1) calc(0.6s + var(--k) * 0.045s) both; }
+.play .dot { animation: pop 0.6s cubic-bezier(0.3, 1.6, 0.5, 1) calc(1.2s + var(--k) * 0.05s) both; }
+.play .bride-pop { animation: rise 1.4s cubic-bezier(0.2, 1.2, 0.4, 1) 1.6s both; }
+.play .bride { animation: floaty 3.6s ease-in-out 3s infinite alternate; }
+.play .palm-glow { animation: glow 1.4s ease-in-out 3.2s infinite alternate both; }
+.play .sparkle { animation: tw 1.6s ease-in-out calc(3s + var(--k) * 0.17s) infinite; }
+.play .petals span { animation: shower var(--t) linear calc(3s + var(--dl)) infinite; }
+.play .kicker { animation: fade-up 0.8s ease-out 4.2s both; }
+.play .event .ch { animation: bounce-in 0.8s cubic-bezier(0.3, 1.6, 0.5, 1) calc(4.5s + var(--i) * 90ms) both; }
+.play .names .ch { animation: ch-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) calc(5.5s + var(--i) * 55ms) both; }
+.play .rule { animation: grow 0.8s ease-out 6.8s both; }
+.play .when { animation: fade-up 0.8s ease-out 7s both; }
+.play .where { animation: fade-up 0.8s ease-out 7.3s both; }
+.play .cnt { animation: fade-up 0.8s ease-out 7.9s both; }
+.play .num { animation: count 1.6s ease-out 8.2s both; }
+@keyframes bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes pop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes rise { from { opacity: 0; transform: translateY(16px) scale(0.92); } to { opacity: 1; transform: none; } }
+@keyframes floaty { from { transform: translateY(0); } to { transform: translateY(-1.3px); } }
+@keyframes glow { from { opacity: 0.2; transform: scale(0.7); } to { opacity: 0.9; transform: scale(1.15); } }
+@keyframes tw { 0%, 100% { opacity: 0; transform: scale(0.2) rotate(0); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
+@keyframes shower { 0% { transform: translate(0, 0) rotate(0); opacity: 0; } 8% { opacity: 0.95; } 100% { transform: translate(6cqw, 190cqw) rotate(340deg); opacity: 0.2; } }
+@keyframes fade-up { from { opacity: 0; transform: translateY(2.4cqw); } to { opacity: 1; transform: none; } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes ch-in { from { opacity: 0; transform: translateY(40%); filter: blur(0.8cqw); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes bounce-in { from { opacity: 0; transform: translateY(-60%) scale(0.6); } to { opacity: 1; transform: none; } }
+@keyframes count { from { --d: 0; } to { --d: var(--days); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } .petals { display: none; } }
+</style>
+
+</head>
+<body>
+<main class="frame">
+  <section class="stage" id="stage" aria-label="Mehendi invitation for Simran and Farhan">
+    <div class="bar" aria-hidden="true"><i></i></div>
+    <svg class="art" id="art" viewBox="0 0 100 177.78" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="fadeg" x1="0" y1="0" x2="0" y2="1"><stop offset="0.72" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+        <mask id="fade" maskContentUnits="objectBoundingBox"><rect x="0" y="0" width="1" height="1" fill="url(#fadeg)"/></mask>
+        <radialGradient id="gold"><stop offset="0" stop-color="#fff3b8" stop-opacity="0.95"/><stop offset="1" stop-color="#f1cf78" stop-opacity="0"/></radialGradient>
+      </defs>
+      <g id="vines"></g>
+      <g class="bride-pop"><g class="bride"><image href="mehendi-bride.webp" x="17" y="20" width="66" height="99" preserveAspectRatio="xMidYMid meet" mask="url(#fade)"/></g></g>
+      <g id="glows"></g>
+      <g id="sparks"></g>
+    </svg>
+    <div class="scrim"></div>
+    <div class="petals" id="petals" aria-hidden="true"></div>
+    <div class="txt">
+      <p class="kicker" id="kicker"></p>
+      <h1 class="event" id="event" data-split></h1>
+      <h2 class="names" id="names" data-split></h2>
+      <div class="rule" aria-hidden="true"></div>
+      <p class="when" id="when"></p>
+      <p class="where" id="where"></p>
+      <p class="cnt" id="cnt"><span class="num" id="num"><span class="sr" id="numText">58</span></span> <span id="unit">days to go</span></p>
+    </div>
+  </section>
+  <div class="controls">
+    <button type="button" id="pause" aria-pressed="false">Pause</button>
+    <button type="button" id="again" class="again">Watch again</button>
+  </div>
+</main>
+
+<script>
+(function () {
+  // Everything that changes lives here. The time and venue are placeholders until the family confirms them.
+  var EVENT = {
+    kicker: 'Join us for the',
+    name: 'Mehendi',
+    couple: 'Simran & Farhan',
+    date: '2026-12-22',
+    time: 'Evening',
+    venue: 'Venue to be confirmed'
+  };
+  (function () {
+    var q = new URLSearchParams(location.search);
+    ['date', 'time', 'venue', 'dress', 'couple'].forEach(function (k) { if (q.get(k)) EVENT[k] = q.get(k); });
+  })();
+  var NS = 'http://www.w3.org/2000/svg';
+  var stage = document.getElementById('stage'), pauseBtn = document.getElementById('pause'), againBtn = document.getElementById('again');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function svg(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function html(tag, cls) { var e = document.createElement(tag); if (cls) e.className = cls; return e; }
+
+  var when = new Date(EVENT.date + 'T00:00:00');
+  document.getElementById('kicker').textContent = EVENT.kicker;
+  document.getElementById('event').textContent = EVENT.name;
+  document.getElementById('names').textContent = EVENT.couple;
+  document.getElementById('when').textContent = when.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  document.getElementById('where').textContent = EVENT.time + '  ·  ' + EVENT.venue;
+  document.querySelectorAll('[data-split]').forEach(function (h) {
+    var text = h.textContent; h.setAttribute('aria-label', text); h.textContent = '';
+    Array.from(text).forEach(function (ch, idx) {
+      var s = html('span', ch === '&' ? 'ch amp' : 'ch'); s.setAttribute('aria-hidden', 'true'); s.style.setProperty('--i', idx);
+      s.textContent = ch === ' ' ? ' ' : ch; h.appendChild(s);
+    });
+  });
+  // Days to go: whole days, same method as the website.
+  var target = when.getTime(), now = Date.now(), days = Math.floor((target - now) / 864e5), cnt = document.getElementById('cnt');
+  if (days >= 1) {
+    document.getElementById('num').style.setProperty('--days', days);
+    document.getElementById('numText').textContent = days;
+    document.getElementById('unit').textContent = days === 1 ? 'day to go' : 'days to go';
+  } else if (target > now) cnt.textContent = 'Tomorrow';
+  else if (now < target + 864e5) cnt.textContent = 'Today is the day';
+  else cnt.hidden = true;
+
+  /* ---- henna vines that draw themselves up both sides and across the top ---- */
+  var vines = document.getElementById('vines');
+  function vine(pathD, k) { return svg('path', { class: 'vine', d: pathD, pathLength: 1, style: '--k:' + k }, vines); }
+  function side(sign) {
+    var x0 = sign < 0 ? 7 : 93, pts = [], d = 'M' + x0 + ' 118';
+    for (var i = 1; i <= 9; i++) {
+      var y = 118 - i * 12, x = x0 + sign * (i % 2 ? 6 : -1);
+      d += ' Q' + (x0 + sign * (i % 2 ? 11 : -6)) + ' ' + (y + 6) + ' ' + x + ' ' + y; pts.push([x, y, i]);
+    }
+    vine(d, sign < 0 ? 0 : 1);
+    pts.forEach(function (p, n) {
+      var dir = (n % 2 ? -1 : 1) * sign;
+      svg('path', { class: 'leaf', d: 'M' + p[0] + ' ' + p[1] + ' q' + (dir * 5) + ' -4 ' + (dir * 9) + ' 0 q' + (-dir * 5) + ' 4 ' + (-dir * 9) + ' 0 z', fill: '#e39a55', style: '--k:' + (n + (sign < 0 ? 0 : 1)) }, vines);
+      svg('circle', { class: 'dot', cx: p[0] + dir * 11.5, cy: p[1], r: 0.9, fill: '#f1cf78', style: '--k:' + n }, vines);
+    });
+  }
+  side(-1); side(1);
+  var top = 'M4 14';
+  for (var t = 0; t < 8; t++) top += ' q' + 6 + ' -9 ' + 12 + ' 0';
+  vine(top, 2);
+  vine('M4 20 Q50 6 96 20', 3);
+
+  /* ---- glowing palms (centres of her two palms in stage units) ---- */
+  var glows = document.getElementById('glows');
+  [[41.2, 41.3], [69.2, 47.7]].forEach(function (p) {
+    svg('circle', { class: 'palm-glow', cx: p[0], cy: p[1], r: 9, fill: 'url(#gold)' }, glows);
+  });
+  var sparks = document.getElementById('sparks');
+  [[35, 32], [47, 30], [41, 50], [62, 38], [76, 40], [69, 58], [30, 44], [82, 52], [50, 22], [58, 16], [22, 70], [78, 80]].forEach(function (p, i) {
+    var z = 1.4 + (i % 3) * 0.7;
+    svg('path', { class: 'sparkle', fill: i % 2 ? '#fff3c4' : '#f1cf78', style: '--k:' + i, d: 'M' + p[0] + ' ' + (p[1] - z) + ' L' + (p[0] + z * 0.28) + ' ' + (p[1] - z * 0.28) + ' L' + (p[0] + z) + ' ' + p[1] + ' L' + (p[0] + z * 0.28) + ' ' + (p[1] + z * 0.28) + ' L' + p[0] + ' ' + (p[1] + z) + ' L' + (p[0] - z * 0.28) + ' ' + (p[1] + z * 0.28) + ' L' + (p[0] - z) + ' ' + p[1] + ' L' + (p[0] - z * 0.28) + ' ' + (p[1] - z * 0.28) + ' Z' }, sparks);
+  });
+
+  var petals = document.getElementById('petals'), pc = ['#f0a030', '#ffd27a', '#ffffff', '#e8742e'];
+  for (var q = 0; q < 24; q++) {
+    var s = html('span');
+    s.style.setProperty('--x', ((q * 41 + 9) % 94) + '%'); s.style.setProperty('--w', (2 + (q % 3) * 0.6).toFixed(1) + 'cqw');
+    s.style.setProperty('--c', pc[q % 4]); s.style.setProperty('--dl', ((q * 0.8) % 7).toFixed(1) + 's'); s.style.setProperty('--t', (8 + ((q * 1.3) % 5)).toFixed(1) + 's');
+    petals.appendChild(s);
+  }
+
+  function play() {
+    stage.classList.remove('play', 'paused', 'done'); void stage.offsetWidth;
+    pauseBtn.setAttribute('aria-pressed', 'false'); pauseBtn.textContent = 'Pause';
+    if (!reduce) stage.classList.add('play');
+  }
+  pauseBtn.addEventListener('click', function () {
+    var p = stage.classList.toggle('paused'); pauseBtn.setAttribute('aria-pressed', String(p)); pauseBtn.textContent = p ? 'Play' : 'Pause';
+  });
+  againBtn.addEventListener('click', play);
+  stage.querySelector('.bar i').addEventListener('animationend', function () { stage.classList.add('done'); });
+  if (reduce) { pauseBtn.hidden = true; againBtn.hidden = true; }
+  play();
+})();
+</script>
+</body>
+</html>
