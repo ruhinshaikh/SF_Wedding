@@ -9,6 +9,7 @@ import json
 import os
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -17,20 +18,18 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-import drive
-from db import UPLOAD_DIR, Guest, GroupMark, Photo, Rsvp, SessionLocal, Vendor, init_db
+from db import DanceGroup, Guest, GroupMark, Rsvp, SessionLocal, Vendor, init_db
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "91")
 SESSION_SECONDS = 60 * 60 * 24 * 14
 
@@ -180,6 +179,7 @@ def rsvp_dict(r: Rsvp | None) -> dict | None:
         "dietary": r.dietary,
         "message": r.message,
         "wants_to_dance": r.wants_to_dance,
+        "dance_type": r.dance_type,
         "dance_with": r.dance_with,
         "dance_notes": r.dance_notes,
         "songs": r.songs,
@@ -226,9 +226,50 @@ def guest_by_token(db: Session, token: str) -> Guest:
     return g
 
 
+ACTIVE_WINDOW = 5 * 60  # seconds: "active now" means seen in the last five minutes
+
+
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else ""))[:64]
+
+
+def seen_ago(g: Guest) -> float | None:
+    if not g.last_seen:
+        return None
+    ts = g.last_seen if g.last_seen.tzinfo else g.last_seen.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def mark_seen(g: Guest, request: Request, db: Session, new_visit: bool) -> None:
+    g.last_seen = datetime.now(timezone.utc)
+    g.last_ip = client_ip(request)
+    if new_visit:
+        g.visits = (g.visits or 0) + 1
+    db.commit()
+
+
+@app.post("/api/invite/{token}/ping")
+def invite_ping(token: str, request: Request, db: Session = Depends(get_db)):
+    mark_seen(guest_by_token(db, token), request, db, new_visit=False)
+    return {"ok": True}
+
+
+@app.get("/api/admin/active", dependencies=[Depends(require_admin)])
+def active_guests(db: Session = Depends(get_db)):
+    rows = []
+    for g in db.scalars(select(Guest).where(Guest.last_seen.is_not(None))).all():
+        ago = seen_ago(g)
+        rows.append({"id": g.id, "name": g.name, "group": g.group, "ip": g.last_ip, "visits": g.visits,
+                     "seconds_ago": ago, "active": ago is not None and ago <= ACTIVE_WINDOW, "replied": g.rsvp is not None})
+    rows.sort(key=lambda r: r["seconds_ago"])
+    return {"active": [r for r in rows if r["active"]], "recent": rows[:15]}
+
+
 @app.get("/api/invite/{token}")
-def get_invite(token: str, db: Session = Depends(get_db)):
+def get_invite(token: str, request: Request, db: Session = Depends(get_db)):
     g = guest_by_token(db, token)
+    mark_seen(g, request, db, new_visit=True)
     cfg = load_config()
     return {
         "guest": {"name": g.name, "max_party": g.max_party, "events": g.events, "offer_stay": g.offer_stay},
@@ -253,6 +294,7 @@ def invite_groups(token: str, db: Session = Depends(get_db)):
 class EventAnswer(BaseModel):
     attending: bool
     headcount: int = Field(default=1, ge=0, le=20)
+    food: dict[str, int] = Field(default_factory=dict)
 
 
 class SongIn(BaseModel):
@@ -265,6 +307,7 @@ class RsvpIn(BaseModel):
     dietary: str = Field(default="", max_length=1000)
     message: str = Field(default="", max_length=2000)
     wants_to_dance: bool = False
+    dance_type: str = Field(default="", max_length=10)
     dance_with: str = Field(default="", max_length=300)
     dance_notes: str = Field(default="", max_length=1000)
     songs: list[SongIn] = Field(default_factory=list, max_length=5)
@@ -287,12 +330,18 @@ def submit_rsvp(token: str, body: RsvpIn, db: Session = Depends(get_db)):
             raise HTTPException(422, f"Please answer for every event (missing: {eid})")
         if a.attending and not (1 <= a.headcount <= g.max_party):
             raise HTTPException(422, f"Headcount must be between 1 and {g.max_party}")
-        answers[eid] = {"attending": a.attending, "headcount": a.headcount if a.attending else 0}
+        opts = set(cfg.get("food_options", []))
+        food = {k: v for k, v in a.food.items() if k in opts and v > 0} if a.attending else {}
+        if sum(food.values()) > a.headcount:
+            raise HTTPException(422, "Food choices can't add up to more than the number of guests")
+        answers[eid] = {"attending": a.attending, "headcount": a.headcount if a.attending else 0, "food": food}
 
     attending_sangeet = any(answers.get(s, {}).get("attending") for s in sangeet_ids)
     wants = body.wants_to_dance and attending_sangeet
     songs: list[dict] = []
     if wants:
+        if body.dance_type not in ("", "solo", "couple", "group"):
+            raise HTTPException(422, "Dance type must be solo, couple or group")
         for s in body.songs:
             title, link = s.title.strip(), s.link.strip()
             if not title and not link:
@@ -316,7 +365,8 @@ def submit_rsvp(token: str, body: RsvpIn, db: Session = Depends(get_db)):
     r.dietary = body.dietary.strip()
     r.message = body.message.strip()
     r.wants_to_dance = wants
-    r.dance_with = body.dance_with.strip() if wants else ""
+    r.dance_type = body.dance_type if wants else ""
+    r.dance_with = body.dance_with.strip() if wants and body.dance_type != "solo" else ""
     r.dance_notes = body.dance_notes.strip() if wants else ""
     r.songs = songs
     from db import now
@@ -327,79 +377,6 @@ def submit_rsvp(token: str, body: RsvpIn, db: Session = Depends(get_db)):
     return {"ok": True, "rsvp": rsvp_dict(r)}
 
 
-# ---------------------------------------------------------------- photos
-
-
-def sync_photo(photo_id: int) -> None:
-    db = SessionLocal()
-    try:
-        p = db.get(Photo, photo_id)
-        if not p or p.drive_status == "synced":
-            return
-        path = UPLOAD_DIR / p.stored_name
-        if not drive.drive_configured():
-            p.drive_status = "disabled"
-            db.commit()
-            return
-        if not path.exists():
-            p.drive_status, p.error = "failed", "Local file missing"
-            db.commit()
-            return
-        try:
-            label = f"{p.uploader_name or 'guest'} - {p.original_name}"
-            file_id, link = drive.upload_file(str(path), label, p.mime_type)
-            p.drive_file_id, p.drive_link, p.drive_status, p.error = file_id, link, "synced", ""
-            path.unlink(missing_ok=True)
-        except Exception as e:  # keep the local file so it can be retried
-            p.drive_status, p.error = "failed", str(e)[:500]
-        db.commit()
-    finally:
-        db.close()
-
-
-@app.post("/api/invite/{token}/photos")
-async def upload_photos(
-    token: str,
-    background: BackgroundTasks,
-    files: list[UploadFile] = File(...),
-    db: Session = Depends(get_db),
-):
-    g = guest_by_token(db, token)
-    if len(files) > 25:
-        raise HTTPException(422, "Please upload up to 25 files at a time")
-    saved = []
-    for f in files:
-        mime = f.content_type or ""
-        if not (mime.startswith("image/") or mime.startswith("video/")):
-            raise HTTPException(422, f"{f.filename}: only photos and videos are allowed")
-        ext = Path(f.filename or "").suffix.lower()[:10]
-        stored = f"{uuid.uuid4().hex}{ext}"
-        size = 0
-        with open(UPLOAD_DIR / stored, "wb") as out:
-            while chunk := await f.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    out.close()
-                    (UPLOAD_DIR / stored).unlink(missing_ok=True)
-                    raise HTTPException(413, f"{f.filename} is larger than {MAX_UPLOAD_BYTES // 1048576} MB")
-                out.write(chunk)
-        p = Photo(
-            guest_id=g.id,
-            uploader_name=g.name,
-            original_name=f.filename or stored,
-            stored_name=stored,
-            mime_type=mime,
-            size_bytes=size,
-        )
-        db.add(p)
-        db.flush()
-        saved.append(p.id)
-    db.commit()
-    for pid in saved:
-        background.add_task(sync_photo, pid)
-    return {"ok": True, "count": len(saved)}
-
-
 # ---------------------------------------------------------------- admin: summary
 
 
@@ -408,13 +385,23 @@ def summary(db: Session = Depends(get_db)):
     cfg = load_config()
     guests = db.scalars(select(Guest)).all()
     vendors = db.scalars(select(Vendor)).all()
-    photos = db.scalars(select(Photo)).all()
 
+    food_options = cfg.get("food_options", [])
     per_event = []
     for e in cfg["events"]:
         invited = [g for g in guests if e["id"] in g.events]
         attending = [g for g in invited if g.rsvp and g.rsvp.events.get(e["id"], {}).get("attending")]
         declined = [g for g in invited if g.rsvp and not g.rsvp.events.get(e["id"], {}).get("attending")]
+        # a guest's food picks apply to every event they attend, never more than that event's headcount
+        food_totals = {o: 0 for o in food_options}
+        food_unspecified = 0
+        for g in attending:
+            left = g.rsvp.events[e["id"]]["headcount"]
+            for o in food_options:
+                n = min(g.rsvp.events[e["id"]].get("food", {}).get(o, 0), left)
+                food_totals[o] += n
+                left -= n
+            food_unspecified += left
         per_event.append(
             {
                 "id": e["id"],
@@ -424,6 +411,8 @@ def summary(db: Session = Depends(get_db)):
                 "attending_guests": sum(g.rsvp.events[e["id"]]["headcount"] for g in attending),
                 "declined_households": len(declined),
                 "pending_households": len(invited) - len(attending) - len(declined),
+                "food": food_totals,
+                "food_unspecified": food_unspecified,
             }
         )
 
@@ -434,17 +423,15 @@ def summary(db: Session = Depends(get_db)):
         "responded": sum(1 for g in guests if g.rsvp),
         "invites_sent": sum(1 for g in guests if g.invite_sent),
         "per_event": per_event,
+        "food_options": food_options,
         "dance_acts": len(dancers),
+        "dance_groups": db.query(DanceGroup).count(),
         "stay_households": sum(1 for g in guests if g.rsvp and g.rsvp.needs_stay),
         "stay_guests": sum(g.rsvp.stay_guests for g in guests if g.rsvp and g.rsvp.needs_stay),
         "songs": sum(len(g.rsvp.songs) for g in dancers),
         "vendors": len(vendors),
         "vendor_total": sum(v.total_cost for v in vendors),
         "vendor_paid": sum(v.amount_paid for v in vendors),
-        "photos": len(photos),
-        "photos_synced": sum(1 for p in photos if p.drive_status == "synced"),
-        "drive_configured": drive.drive_configured(),
-        "drive_folder": drive.folder_link(),
         "rsvp_deadline": cfg.get("rsvp_deadline"),
     }
 
@@ -599,12 +586,13 @@ async def import_guests(file: UploadFile = File(...), db: Session = Depends(get_
 def export_guests(db: Session = Depends(get_db)):
     cfg = load_config()
     guests = db.scalars(select(Guest).order_by(Guest.name)).all()
+    dance_group_names = {d.id: d.name for d in db.scalars(select(DanceGroup)).all()}
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(
         ["name", "group", "phone", "email", "max_party", "status", "headcount"]
         + [e["name"] for e in cfg["events"]]
-        + ["dietary", "message", "wants_to_dance", "dance_with", "songs", "needs_stay", "stay_guests", "stay_notes", "invite_url"]
+        + ["allergies / other", "message", "wants_to_dance", "dance_type", "dance_group", "dance_with", "songs", "needs_stay", "stay_guests", "stay_notes", "invite_url"]
     )
     for g in guests:
         r = g.rsvp
@@ -616,14 +604,20 @@ def export_guests(db: Session = Depends(get_db)):
                 per.append("pending")
             else:
                 a = r.events.get(e["id"], {})
-                per.append(str(a.get("headcount", 0)) if a.get("attending") else "no")
+                if a.get("attending"):
+                    f = ", ".join(f"{k} {n}" for k, n in a.get("food", {}).items())
+                    per.append(f"{a.get('headcount', 0)} ({f})" if f else str(a.get("headcount", 0)))
+                else:
+                    per.append("no")
         w.writerow(
             [g.name, g.group, g.phone, g.email, g.max_party, rsvp_status(g), rsvp_headcount(g)]
             + per
             + [
-                r.dietary if r else "",
+                                r.dietary if r else "",
                 r.message if r else "",
                 "yes" if r and r.wants_to_dance else "",
+                r.dance_type if r else "",
+                dance_group_names.get(g.dance_group_id, ""),
                 r.dance_with if r else "",
                 " | ".join(f"{s['title']} {s['link']}".strip() for s in (r.songs if r else [])),
                 "yes" if r and r.needs_stay else "",
@@ -654,13 +648,93 @@ def song_requests(db: Session = Depends(get_db)):
                     "guest_id": g.id,
                     "guest": g.name,
                     "group": g.group,
+                    "dance_type": r.dance_type,
                     "dance_with": r.dance_with,
                     "notes": r.dance_notes,
                     "songs": r.songs,
                     "phone": g.phone,
+                    "dance_group_id": g.dance_group_id,
                 }
             )
     return acts
+
+
+class DanceGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    notes: str = Field(default="", max_length=1000)
+
+
+class DanceGroupAssign(BaseModel):
+    group_id: Optional[int] = None
+
+
+@app.get("/api/admin/dance-groups", dependencies=[Depends(require_admin)])
+def list_dance_groups(db: Session = Depends(get_db)):
+    groups = db.scalars(select(DanceGroup).order_by(DanceGroup.name)).all()
+    guests = db.scalars(select(Guest).order_by(Guest.name)).all()
+    sangeet_ids = {e["id"] for e in load_config()["events"] if e.get("is_sangeet")}
+    out = []
+    for grp in groups:
+        members = [
+            {
+                "guest_id": g.id,
+                "name": g.name,
+                "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance),
+                "dance_type": g.rsvp.dance_type if g.rsvp else "",
+                "songs": len(g.rsvp.songs) if g.rsvp else 0,
+            }
+            for g in guests
+            if g.dance_group_id == grp.id
+        ]
+        out.append({"id": grp.id, "name": grp.name, "notes": grp.notes, "members": members})
+    # guests who could be added: invited to a Sangeet and not already in a group
+    available = [
+        {"guest_id": g.id, "name": g.name, "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance)}
+        for g in guests
+        if g.dance_group_id is None and sangeet_ids & set(g.events)
+    ]
+    return {"groups": out, "available": available}
+
+
+@app.post("/api/admin/dance-groups", dependencies=[Depends(require_admin)])
+def create_dance_group(body: DanceGroupIn, db: Session = Depends(get_db)):
+    grp = DanceGroup(name=body.name.strip(), notes=body.notes.strip())
+    db.add(grp)
+    db.commit()
+    return {"id": grp.id}
+
+
+@app.put("/api/admin/dance-groups/{gid}", dependencies=[Depends(require_admin)])
+def update_dance_group(gid: int, body: DanceGroupIn, db: Session = Depends(get_db)):
+    grp = db.get(DanceGroup, gid)
+    if not grp:
+        raise HTTPException(404, "Dance group not found")
+    grp.name, grp.notes = body.name.strip(), body.notes.strip()
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/dance-groups/{gid}", dependencies=[Depends(require_admin)])
+def delete_dance_group(gid: int, db: Session = Depends(get_db)):
+    grp = db.get(DanceGroup, gid)
+    if not grp:
+        raise HTTPException(404, "Dance group not found")
+    db.execute(update(Guest).where(Guest.dance_group_id == gid).values(dance_group_id=None))
+    db.delete(grp)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/admin/guests/{guest_id}/dance-group", dependencies=[Depends(require_admin)])
+def assign_dance_group(guest_id: int, body: DanceGroupAssign, db: Session = Depends(get_db)):
+    g = db.get(Guest, guest_id)
+    if not g:
+        raise HTTPException(404, "Guest not found")
+    if body.group_id is not None and not db.get(DanceGroup, body.group_id):
+        raise HTTPException(404, "Dance group not found")
+    g.dance_group_id = body.group_id
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- admin: vendors
@@ -729,51 +803,6 @@ def delete_vendor(vid: int, db: Session = Depends(get_db)):
     db.delete(v)
     db.commit()
     return {"ok": True}
-
-
-# ---------------------------------------------------------------- admin: photos
-
-
-def photo_dict(p: Photo) -> dict:
-    return {
-        "id": p.id,
-        "uploader": p.uploader_name,
-        "name": p.original_name,
-        "mime_type": p.mime_type,
-        "size_bytes": p.size_bytes,
-        "drive_status": p.drive_status,
-        "drive_link": p.drive_link,
-        "error": p.error,
-        "local": (UPLOAD_DIR / p.stored_name).exists(),
-        "created_at": p.created_at.isoformat(),
-    }
-
-
-@app.get("/api/admin/photos", dependencies=[Depends(require_admin)])
-def list_photos(db: Session = Depends(get_db)):
-    photos = db.scalars(select(Photo).order_by(Photo.created_at.desc())).all()
-    return {
-        "photos": [photo_dict(p) for p in photos],
-        "drive_configured": drive.drive_configured(),
-        "drive_folder": drive.folder_link(),
-    }
-
-
-@app.get("/api/admin/photos/{pid}/file", dependencies=[Depends(require_admin)])
-def photo_file(pid: int, db: Session = Depends(get_db)):
-    p = db.get(Photo, pid)
-    path = UPLOAD_DIR / p.stored_name if p else None
-    if not p or not path or not path.exists():
-        raise HTTPException(404, "File is no longer stored on the server (check Google Drive)")
-    return FileResponse(path, media_type=p.mime_type, filename=p.original_name)
-
-
-@app.post("/api/admin/photos/sync", dependencies=[Depends(require_admin)])
-def resync_photos(background: BackgroundTasks, db: Session = Depends(get_db)):
-    pending = db.scalars(select(Photo).where(Photo.drive_status.in_(["pending", "failed", "disabled"]))).all()
-    for p in pending:
-        background.add_task(sync_photo, p.id)
-    return {"queued": len(pending)}
 
 
 # ---------------------------------------------------------------- serve built frontend (single-process deploy)

@@ -5,9 +5,8 @@ const TABS = [
   ['overview', 'Overview'],
   ['guests', 'Guests'],
   ['groups', 'WhatsApp groups'],
-  ['sangeet', 'Sangeet songs'],
+  ['sangeet', 'Sangeet dances'],
   ['vendors', 'Vendors'],
-  ['photos', 'Photos'],
 ]
 
 export default function Admin() {
@@ -57,7 +56,6 @@ export default function Admin() {
         {tab === 'groups' && <Groups />}
         {tab === 'sangeet' && <Songs />}
         {tab === 'vendors' && <Vendors config={config} />}
-        {tab === 'photos' && <Photos />}
       </main>
     </div>
   )
@@ -127,6 +125,48 @@ const inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN')
 
 /* ---------------------------------------------------------------- overview */
 
+function ago(sec) {
+  if (sec < 60) return 'just now'
+  if (sec < 3600) return `${Math.floor(sec / 60)} min ago`
+  if (sec < 86400) return `${Math.floor(sec / 3600)} h ago`
+  return `${Math.floor(sec / 86400)} d ago`
+}
+
+function ActiveNow() {
+  const [d, setD] = useState(null)
+  useEffect(() => {
+    const load = () => api.active().then(setD).catch(() => {})
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [])
+  if (!d) return null
+  const row = (r) => (
+    <tr key={r.id}>
+      <td>{r.name}<div className="muted small">{r.group}</div></td>
+      <td className="small">{r.ip || '-'}</td>
+      <td className="small">{r.replied ? 'Replied' : 'Not yet'}</td>
+      <td className="small">{r.visits}</td>
+      <td className="small">{ago(r.seconds_ago)}</td>
+    </tr>
+  )
+  const head = <thead><tr><th>Guest</th><th>IP address</th><th>RSVP</th><th>Visits</th><th>Last seen</th></tr></thead>
+  return (
+    <section>
+      <h2 className="display h3">Active now ({d.active.length})</h2>
+      {d.active.length === 0 ? <p className="muted small">Nobody has the invitation open right now. Updates every 15 seconds.</p> : (
+        <div className="table-wrap"><table>{head}<tbody>{d.active.map(row)}</tbody></table></div>
+      )}
+      {d.recent.length > 0 && (
+        <details>
+          <summary className="muted small">Recent visitors</summary>
+          <div className="table-wrap"><table>{head}<tbody>{d.recent.map(row)}</tbody></table></div>
+        </details>
+      )}
+    </section>
+  )
+}
+
 function Overview({ config, goto }) {
   const [s, , error] = useLoad(api.summary)
   if (error) return <p className="error">{error}</p>
@@ -142,13 +182,15 @@ function Overview({ config, goto }) {
         <Stat n={s.stay_guests} label="people need a stay" sub={`${s.stay_households} invitations`} />
       </section>
 
+      <ActiveNow />
+
       <section>
-        <h2 className="display h3">Headcount by event</h2>
+        <h2 className="display h3">Guests and food by event</h2>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Event</th><th>Attending</th><th>Declined</th><th>Waiting</th><th>Seats invited</th>
+                <th>Event</th><th>Attending</th><th>Declined</th><th>Waiting</th><th>Seats invited</th>{(s.food_options || []).map((o) => <th key={o}>{o}</th>)}<th>Not said</th>
               </tr>
             </thead>
             <tbody>
@@ -159,6 +201,8 @@ function Overview({ config, goto }) {
                   <td>{e.declined_households}</td>
                   <td>{e.pending_households}</td>
                   <td>{e.invited_seats}</td>
+                  {(s.food_options || []).map((o) => <td key={o}>{e.food?.[o] || 0}</td>)}
+                  <td className="muted">{e.food_unspecified || 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -174,15 +218,6 @@ function Overview({ config, goto }) {
             {s.vendor_total > 0 && <> ({inr(s.vendor_total - s.vendor_paid)} still due)</>}.
           </p>
           <button className="link-btn" onClick={() => goto('vendors')}>Open vendors</button>
-        </div>
-        <div>
-          <h2 className="display h3">Photo album</h2>
-          <p>
-            {s.photos} uploaded, {s.photos_synced} in Google Drive.
-            {!s.drive_configured && ' Google Drive is not connected yet, so files are only stored on the server.'}
-          </p>
-          {s.drive_folder && <a href={s.drive_folder} target="_blank" rel="noreferrer">Open Drive folder</a>}{' '}
-          <button className="link-btn" onClick={() => goto('photos')}>Open photos</button>
         </div>
       </section>
     </div>
@@ -207,6 +242,7 @@ function Guests({ config }) {
   const [guests, reload, error] = useLoad(api.guests)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState('all')
+  const [groupFilter, setGroupFilter] = useState('')
   const [editing, setEditing] = useState(null)
   const [note, setNote] = useState('')
 
@@ -214,11 +250,12 @@ function Guests({ config }) {
     if (!guests) return []
     const s = q.trim().toLowerCase()
     return guests.filter((g) => {
+      if (groupFilter && g.group !== groupFilter) return false
       if (filter === 'unsent' && g.invite_sent) return false
       if (['pending', 'attending', 'declined'].includes(filter) && g.status !== filter) return false
       return !s || `${g.name} ${g.group} ${g.phone}`.toLowerCase().includes(s)
     })
-  }, [guests, q, filter])
+  }, [guests, q, filter, groupFilter])
 
   async function sendWhatsApp(g) {
     window.open(g.whatsapp_url, '_blank', 'noopener')
@@ -261,6 +298,12 @@ function Guests({ config }) {
     <div className="stack">
       <div className="toolbar">
         <input aria-label="Search guests" placeholder="Search name, group or phone" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select aria-label="Filter by group" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
+          <option value="">All groups</option>
+          {[...new Set([...(config.guest_groups || []), ...(guests || []).map((g) => g.group).filter(Boolean)])].map((x) => (
+            <option key={x} value={x}>{x}</option>
+          ))}
+        </select>
         <select aria-label="Filter guests" value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="all">Everyone ({guests.length})</option>
           <option value="unsent">Not sent yet</option>
@@ -299,7 +342,10 @@ function Guests({ config }) {
                 <td>
                   <span className={`badge ${g.status}`}>{g.status === 'attending' ? `Attending (${g.headcount})` : g.status === 'declined' ? 'Declined' : 'Waiting'}</span>
                   {g.rsvp?.wants_to_dance && <div className="small">Dancing at Sangeet</div>}
-                  {g.rsvp?.dietary && <div className="muted small">Food: {g.rsvp.dietary}</div>}
+                  {Object.entries(g.rsvp?.events || {}).filter(([, v]) => v.attending && Object.keys(v.food || {}).length).map(([id, v]) => (
+                    <div key={id} className="muted small">{evName[id]} food: {Object.entries(v.food).map(([k, n]) => `${k} ×${n}`).join(', ')}</div>
+                  ))}
+                  {g.rsvp?.dietary && <div className="muted small">Allergies/other: {g.rsvp.dietary}</div>}
                   {g.offer_stay && !g.rsvp?.needs_stay && <div className="muted small">Stay offered</div>}
                   {g.rsvp?.needs_stay && (
                     <div className="small">
@@ -368,7 +414,15 @@ function GuestForm({ config, initial, onClose, onSaved }) {
         <div className="grid-2">
           <label className="field"><span>WhatsApp number</span><input value={g.phone} onChange={set('phone')} inputMode="tel" placeholder="98450 12345" /></label>
           <label className="field"><span>Seats on this invitation</span><input type="number" min="1" max="20" value={g.max_party} onChange={set('max_party')} /></label>
-          <label className="field"><span>Group</span><input value={g.group} onChange={set('group')} placeholder="Bride's family, College friends" /></label>
+          <label className="field">
+            <span>Group</span>
+            <select value={g.group} onChange={set('group')}>
+              <option value="">Not set</option>
+              {[...(config.guest_groups || []), ...(g.group && !(config.guest_groups || []).includes(g.group) ? [g.group] : [])].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </label>
           <label className="field"><span>Email (optional)</span><input value={g.email} onChange={set('email')} type="email" /></label>
         </div>
         <fieldset className="field-group">
@@ -476,30 +530,112 @@ function Groups() {
   )
 }
 
+const DANCE_LABEL = { solo: 'Solo', couple: 'Couple', group: 'Group' }
+
 function Songs() {
-  const [acts, , error] = useLoad(api.songs)
+  const [acts, reloadActs, error] = useLoad(api.songs)
+  const [dg, reloadGroups] = useLoad(api.danceGroups)
+  const [name, setName] = useState('')
+  const [err, setErr] = useState('')
   if (error) return <p className="error">{error}</p>
-  if (!acts) return <p className="muted">Loading…</p>
-  if (acts.length === 0)
-    return <p className="muted">No dance requests yet. They'll show up here as guests reply to the Sangeet.</p>
+  if (!acts || !dg) return <p className="muted">Loading…</p>
+
+  const reload = () => { reloadActs(); reloadGroups() }
+  const groupName = Object.fromEntries(dg.groups.map((g) => [g.id, g.name]))
+
+  async function create(e) {
+    e.preventDefault()
+    if (!name.trim()) return
+    setErr('')
+    try { await api.saveDanceGroup({ name }); setName(''); reload() } catch (x) { setErr(x.message) }
+  }
+  async function rename(g) {
+    const n = prompt('Group name', g.name)
+    if (n && n.trim() && n !== g.name) { await api.saveDanceGroup({ id: g.id, name: n, notes: g.notes }); reload() }
+  }
+  async function remove(g) {
+    if (!confirm(`Delete the group "${g.name}"? Its members stay on the guest list.`)) return
+    await api.deleteDanceGroup(g.id)
+    reload()
+  }
+  async function assign(guestId, value) {
+    await api.assignDanceGroup(guestId, value ? Number(value) : null)
+    reload()
+  }
+
   return (
-    <div className="stack">
-      <p className="muted">{acts.length} {acts.length === 1 ? 'dance' : 'dances'}, {acts.reduce((n, a) => n + a.songs.length, 0)} songs. Share this list with the DJ or choreographer.</p>
-      {acts.map((a) => (
-        <article key={a.guest_id} className="act">
-          <h3 className="act-name">{a.guest}{a.group && <span className="muted small"> ({a.group})</span>}</h3>
-          {a.dance_with && <p>Dancing with: {a.dance_with}</p>}
-          <ul className="song-list">
-            {a.songs.map((s, i) => (
-              <li key={i}>
-                {s.title || 'Untitled'}{' '}
-                {s.link && <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a>}
-              </li>
+    <div className="stack-lg">
+      <section className="stack">
+        <h2 className="display h3">Dance groups</h2>
+        <p className="muted small">Make a group for each dance (for example "Bride's cousins"), then add guests to it. Guests are added from the dropdown on each group, or from the song list below.</p>
+        <form className="toolbar" onSubmit={create}>
+          <input aria-label="New dance group name" placeholder="New group name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
+          <button className="btn btn-rani" disabled={!name.trim()}>Create group</button>
+        </form>
+        {err && <p className="error">{err}</p>}
+        {dg.groups.length === 0 && <p className="muted">No dance groups yet.</p>}
+        {dg.groups.map((g) => (
+          <article key={g.id} className="act">
+            <h3 className="act-name">{g.name} <span className="muted small">({g.members.length} {g.members.length === 1 ? 'guest' : 'guests'})</span></h3>
+            {g.members.length === 0 && <p className="muted small">Nobody added yet.</p>}
+            <ul className="song-list">
+              {g.members.map((m) => (
+                <li key={m.guest_id}>
+                  {m.name}
+                  {m.wants_to_dance && <span className="muted small"> ({DANCE_LABEL[m.dance_type] || 'dancing'}, {m.songs} {m.songs === 1 ? 'song' : 'songs'})</span>}{' '}
+                  <button className="link-btn" onClick={() => assign(m.guest_id, '')}>Remove</button>
+                </li>
+              ))}
+            </ul>
+            <div className="toolbar">
+              <select aria-label={`Add a guest to ${g.name}`} value="" onChange={(e) => e.target.value && assign(e.target.value, g.id)}>
+                <option value="">Add a guest…</option>
+                {dg.available.map((a) => (
+                  <option key={a.guest_id} value={a.guest_id}>{a.name}{a.wants_to_dance ? ' (wants to dance)' : ''}</option>
+                ))}
+              </select>
+              <button className="link-btn" onClick={() => rename(g)}>Rename</button>
+              <button className="link-btn" onClick={() => remove(g)}>Delete</button>
+            </div>
+          </article>
+        ))}
+      </section>
+
+      <section className="stack">
+        <h2 className="display h3">Dance requests</h2>
+        {acts.length === 0 ? (
+          <p className="muted">No dance requests yet. They'll show up here as guests reply to the Sangeet.</p>
+        ) : (
+          <>
+            <p className="muted">{acts.length} {acts.length === 1 ? 'dance' : 'dances'}, {acts.reduce((n, a) => n + a.songs.length, 0)} songs. Share this list with the DJ or choreographer.</p>
+            {acts.map((a) => (
+              <article key={a.guest_id} className="act">
+                <h3 className="act-name">
+                  {a.guest}{a.group && <span className="muted small"> ({a.group})</span>}
+                  {a.dance_type && <span className="badge"> {DANCE_LABEL[a.dance_type]}</span>}
+                </h3>
+                {a.dance_with && <p>Dancing with: {a.dance_with}</p>}
+                <label className="inline-field">
+                  <span>Dance group</span>
+                  <select value={a.dance_group_id || ''} onChange={(e) => assign(a.guest_id, e.target.value)}>
+                    <option value="">None</option>
+                    {dg.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </label>
+                <ul className="song-list">
+                  {a.songs.map((s, i) => (
+                    <li key={i}>
+                      {s.title || 'Untitled'}{' '}
+                      {s.link && <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a>}
+                    </li>
+                  ))}
+                </ul>
+                {a.notes && <p className="muted small">Note: {a.notes}</p>}
+              </article>
             ))}
-          </ul>
-          {a.notes && <p className="muted small">Note: {a.notes}</p>}
-        </article>
-      ))}
+          </>
+        )}
+      </section>
     </div>
   )
 }
@@ -591,48 +727,3 @@ function VendorForm({ initial, config, onClose, onSaved }) {
   )
 }
 
-/* ---------------------------------------------------------------- photos */
-
-function Photos() {
-  const [d, reload, error] = useLoad(api.photos)
-  const [msg, setMsg] = useState('')
-  if (error) return <p className="error">{error}</p>
-  if (!d) return <p className="muted">Loading…</p>
-  const waiting = d.photos.filter((p) => p.drive_status !== 'synced').length
-
-  async function retry() {
-    const r = await api.syncPhotos()
-    setMsg(`Retrying ${r.queued} files. Refresh in a moment.`)
-    setTimeout(reload, 3000)
-  }
-  return (
-    <div className="stack">
-      {!d.drive_configured && (
-        <p className="notice">Google Drive isn't connected. Uploads are kept on the server until you add the Google keys to backend/.env (see the README), then press Retry.</p>
-      )}
-      <div className="toolbar">
-        <span>{d.photos.length} files, {waiting} not in Drive yet</span>
-        {d.drive_folder && <a className="btn btn-ghost" href={d.drive_folder} target="_blank" rel="noreferrer">Open Drive folder</a>}
-        {waiting > 0 && <button className="btn btn-rani" onClick={retry}>Retry Drive upload</button>}
-        <button className="link-btn" onClick={reload}>Refresh</button>
-      </div>
-      {msg && <p className="notice" role="status">{msg}</p>}
-      {d.photos.length === 0 && <p className="muted">No uploads yet.</p>}
-      <ul className="photo-grid">
-        {d.photos.map((p) => (
-          <li key={p.id} className="photo">
-            {p.local && p.mime_type.startsWith('image/') ? (
-              <img src={adminUrl(`/admin/photos/${p.id}/file`)} alt={`Uploaded by ${p.uploader}`} loading="lazy" />
-            ) : (
-              <div className="photo-ph">{p.mime_type.startsWith('video/') ? 'Video' : 'In Drive'}</div>
-            )}
-            <div className="small">{p.uploader}</div>
-            <div className={`small status-${p.drive_status}`}>
-              {p.drive_status === 'synced' ? <a href={p.drive_link} target="_blank" rel="noreferrer">In Drive</a> : p.drive_status === 'failed' ? `Drive error: ${p.error}` : p.drive_status === 'disabled' ? 'Waiting for Drive setup' : 'Uploading'}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}

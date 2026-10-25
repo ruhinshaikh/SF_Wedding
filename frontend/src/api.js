@@ -34,12 +34,9 @@ async function request(path, { method = 'GET', body, form, admin = false } = {})
 
 export const api = {
   invite: (token) => request(`/invite/${token}`),
+  ping: (token) => request(`/invite/${token}/ping`, { method: 'POST' }).catch(() => {}),
+  active: () => request('/admin/active', { admin: true }),
   rsvp: (token, body) => request(`/invite/${token}/rsvp`, { method: 'POST', body }),
-  uploadPhotos: (token, files) => {
-    const form = new FormData()
-    files.forEach((f) => form.append('files', f))
-    return request(`/invite/${token}/photos`, { method: 'POST', form })
-  },
   inviteGroups: (token) => request(`/invite/${token}/groups`),
   login: (password) => request('/admin/login', { method: 'POST', body: { password } }),
   config: () => request('/config'),
@@ -61,6 +58,12 @@ export const api = {
   groups: () => request('/admin/groups', { admin: true }),
   markGroup: (gid, guestId, done) => request(`/admin/groups/${gid}/guests/${guestId}?done=${done}`, { method: 'POST', admin: true }),
   songs: () => request('/admin/songs', { admin: true }),
+  danceGroups: () => request('/admin/dance-groups', { admin: true }),
+  saveDanceGroup: (g) =>
+    request(g.id ? `/admin/dance-groups/${g.id}` : '/admin/dance-groups', { method: g.id ? 'PUT' : 'POST', body: g, admin: true }),
+  deleteDanceGroup: (id) => request(`/admin/dance-groups/${id}`, { method: 'DELETE', admin: true }),
+  assignDanceGroup: (guestId, groupId) =>
+    request(`/admin/guests/${guestId}/dance-group`, { method: 'POST', body: { group_id: groupId }, admin: true }),
   vendors: () => request('/admin/vendors', { admin: true }),
   saveVendor: (v) =>
     request(v.id ? `/admin/vendors/${v.id}` : '/admin/vendors', {
@@ -69,8 +72,6 @@ export const api = {
       admin: true,
     }),
   deleteVendor: (id) => request(`/admin/vendors/${id}`, { method: 'DELETE', admin: true }),
-  photos: () => request('/admin/photos', { admin: true }),
-  syncPhotos: () => request('/admin/photos/sync', { method: 'POST', admin: true }),
 }
 
 // Authenticated downloads (CSV) and image URLs use the token as a query param.

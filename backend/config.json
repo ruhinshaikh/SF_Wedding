@@ -64,7 +64,7 @@
       "time": "6:00 PM",
       "venue": "Vasai",
       "address": "",
-      "map_url": "https://share.google/KLZCfrdtIkNNvs9T8",
+      "map_url": "https://maps.app.goo.gl/9HasXFMMJUeQpEjM8",
       "dress_code": "",
       "is_sangeet": false
     }
@@ -82,5 +82,21 @@
       "url": "https://chat.whatsapp.com/DDTPDIfoSbrAZFR6zId5Ze?mode=gi_t",
       "for": "sangeet"
     }
+  ],
+  "food_options": [
+    "Vegetarian",
+    "Non-vegetarian",
+    "Jain",
+    "Vegan"
+  ],
+  "guest_groups": [
+    "Bride's family",
+    "Bride's friends",
+    "Bride's family friends",
+    "Bride's relatives",
+    "Groom's family",
+    "Groom's friends",
+    "Groom's family friends",
+    "Groom's relatives"
   ]
 }

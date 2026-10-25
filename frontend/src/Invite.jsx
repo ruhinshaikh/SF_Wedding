@@ -50,15 +50,76 @@ export function Preview() {
   return <InviteBody token="preview" data={data} preview />
 }
 
+/* Open invitation for the Nikkah: no personal link, no reply form. Anyone with the address can see it. */
+export function NikkahPublic() {
+  const [config, setConfig] = useState(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api.config().then(setConfig).catch((e) => setError(e.message))
+  }, [])
+  if (error) return <main className="narrow center-page"><p className="error">{error}</p></main>
+  if (!config) return <main className="narrow center-page muted">Loading…</main>
+
+  const { couple } = config
+  const e = config.events.find((x) => x.id === 'nikkah') || config.events.find((x) => x.id === couple.featured_event)
+  if (!e) return <main className="narrow center-page muted">The Nikkah details are not ready yet.</main>
+  const d = dayParts(e.date)
+  return (
+    <>
+      <Hero couple={couple} featured={e} publicPage />
+      <main>
+        <section className="narrow section" aria-labelledby="nk-h">
+          <h2 id="nk-h" className="display h2">Where we'll be</h2>
+          <p className="muted lead">{couple.hosted_by} invite you to join the celebration.</p>
+          <ol className="events">
+            <li className="event">
+              <div className="event-date" aria-hidden="true">
+                <span className="event-day">{d.day}</span>
+                <span className="event-month">{d.month}</span>
+              </div>
+              <div>
+                <h3 className="event-name">{e.name}</h3>
+                <p className="event-when">{d.weekday}{e.time ? `, ${e.time}` : ''}</p>
+                <p>
+                  {e.venue}{e.address ? `, ${e.address}` : ''}
+                  {e.map_url && (<>{' '}<a href={e.map_url} target="_blank" rel="noreferrer">Open in Maps</a></>)}
+                </p>
+                {e.dress_code && <p className="muted small">Dress: {e.dress_code}</p>}
+                {e.map_url && (
+                  <div className="qr-card">
+                    <img src="/nikkah-qr.png" alt={`QR code for the ${e.name} location`} width="160" height="160" />
+                    <div>
+                      <a className="btn btn-gold" href={e.map_url} target="_blank" rel="noreferrer">Get directions</a>
+                      <p className="muted small">Or scan the code to open the location in Maps.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </li>
+          </ol>
+          <p className="muted small">Looking for the other celebrations? <a href="/events">See the full schedule</a>.</p>
+        </section>
+      </main>
+      <footer className="footer">With love, {couple.title}</footer>
+    </>
+  )
+}
+
 export function InviteBody({ token, data, preview = false }) {
   const { guest, config, rsvp: existing } = data
   const { couple, events } = config
   const firstName = guest.name.split(' ')[0]
+  // tell the couple this guest is looking at the invitation (only while the tab is visible)
+  useEffect(() => {
+    if (preview) return
+    const t = setInterval(() => document.visibilityState === 'visible' && api.ping(token), 60000)
+    return () => clearInterval(t)
+  }, [token, preview])
   const [answers, setAnswers] = useState(() =>
     Object.fromEntries(
       events.map((e) => {
         const prev = existing?.events?.[e.id]
-        return [e.id, { attending: prev ? prev.attending : null, headcount: prev?.headcount || 1 }]
+        return [e.id, { attending: prev ? prev.attending : null, headcount: prev?.headcount || 1, food: prev?.food || {} }]
       }),
     ),
   )
@@ -79,7 +140,7 @@ export function InviteBody({ token, data, preview = false }) {
           <p className="muted lead">{couple.welcome_note}</p>
           <ol className="events">
             {events.map((e, i) => (
-              <EventRow key={e.id} e={e} index={i} couple={couple.title} answer={answers[e.id]} setAnswer={setAnswer} maxParty={guest.max_party} />
+              <EventRow key={e.id} e={e} index={i} couple={couple.title} answer={answers[e.id]} setAnswer={setAnswer} maxParty={guest.max_party} foodOptions={config.food_options || []} />
             ))}
           </ol>
         </section>
@@ -91,13 +152,6 @@ export function InviteBody({ token, data, preview = false }) {
           </div>
         </section>
 
-        <section className="narrow section" aria-labelledby="photos-h">
-          <h2 id="photos-h" className="display h2">Share your photos</h2>
-          <p className="muted lead">
-            Add pictures and videos from any of the celebrations. They go straight into the family's shared album.
-          </p>
-          <PhotoUpload token={token} preview={preview} />
-        </section>
       </main>
       <footer className="footer">With love, {couple.title}</footer>
     </>
@@ -124,7 +178,7 @@ function Sparkles() {
   )
 }
 
-function Hero({ couple, featured, guestName }) {
+function Hero({ couple, featured, guestName, publicPage = false }) {
   return (
     <header className="hero">
       <Sparkles />
@@ -146,10 +200,12 @@ function Hero({ couple, featured, guestName }) {
           <Countdown target={featured.date} label={`until the ${featured.name}`} />
         </>
       )}
-      <p className="hero-greeting">Dear {guestName},</p>
-      <a className="btn btn-gold hero-cta" href="#rsvp">
-        Reply to this invitation
-      </a>
+      {!publicPage && <p className="hero-greeting">Dear {guestName},</p>}
+      {!publicPage && (
+        <a className="btn btn-gold hero-cta" href="#rsvp">
+          Reply to this invitation
+        </a>
+      )}
     </header>
   )
 }
@@ -206,7 +262,15 @@ function useReveal() {
   return ref
 }
 
-function EventReply({ e, a, setAnswer, maxParty }) {
+function EventReply({ e, a, setAnswer, maxParty, foodOptions = [] }) {
+  const food = a.food || {}
+  const head = a.headcount || 1
+  const toggle = (o) => {
+    const n = { ...food }
+    if (n[o]) delete n[o]
+    else n[o] = Object.keys(food).length ? 1 : head
+    setAnswer(e.id, { food: n })
+  }
   return (
     <div className="reply-side" role="group" aria-label={`Your reply for the ${e.name}`}>
       <p className="reply-title">Will you be there?</p>
@@ -230,12 +294,30 @@ function EventReply({ e, a, setAnswer, maxParty }) {
           </select>
         </label>
       )}
+      {a.attending && foodOptions.length > 0 && (
+        <div className="food-opts">
+          <p className="reply-title">Food for this one</p>
+          {foodOptions.map((o) => (
+            <div key={o} className="food-opt">
+              <label className="check">
+                <input type="checkbox" checked={!!food[o]} onChange={() => toggle(o)} /> {o}
+              </label>
+              {food[o] && head > 1 && (
+                <label className="food-n">
+                  <input type="number" min="1" max={head} value={Math.min(food[o], head)} onChange={(ev) => setAnswer(e.id, { food: { ...food, [o]: Math.max(1, Math.min(head, Number(ev.target.value) || 1)) } })} />
+                  <span>{food[o] === 1 ? 'person' : 'people'}</span>
+                </label>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <p className="muted small">Then send your reply at the bottom of the page.</p>
     </div>
   )
 }
 
-function EventRow({ e, index, couple, answer, setAnswer, maxParty }) {
+function EventRow({ e, index, couple, answer, setAnswer, maxParty, foodOptions }) {
   const ref = useReveal()
   const d = dayParts(e.date)
 
@@ -253,7 +335,7 @@ function EventRow({ e, index, couple, answer, setAnswer, maxParty }) {
         </p>
         <div className="film-row">
           <iframe className="film-frame" src={src} title={`${e.name} invitation`} loading="lazy" allow="autoplay" />
-          <EventReply e={e} a={answer} setAnswer={setAnswer} maxParty={maxParty} />
+          <EventReply e={e} a={answer} setAnswer={setAnswer} maxParty={maxParty} foodOptions={foodOptions} />
         </div>
         {(e.map_url || e.address) && (
           <p className="small">
@@ -295,7 +377,7 @@ function EventRow({ e, index, couple, answer, setAnswer, maxParty }) {
           )}
         </p>
         {e.dress_code && <p className="muted small">Dress: {e.dress_code}</p>}
-        <EventReply e={e} a={answer} setAnswer={setAnswer} maxParty={maxParty} />
+        <EventReply e={e} a={answer} setAnswer={setAnswer} maxParty={maxParty} foodOptions={foodOptions} />
       </div>
     </li>
   )
@@ -311,6 +393,7 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
   const [stayNotes, setStayNotes] = useState(existing?.stay_notes || '')
   const [message, setMessage] = useState(existing?.message || '')
   const [wantsDance, setWantsDance] = useState(existing ? (sangeet ? existing.wants_to_dance : null) : null)
+  const [danceType, setDanceType] = useState(existing?.dance_type || '')
   const [danceWith, setDanceWith] = useState(existing?.dance_with || '')
   const [danceNotes, setDanceNotes] = useState(existing?.dance_notes || '')
   const [songs, setSongs] = useState(existing?.songs?.length ? existing.songs : [emptySong()])
@@ -353,7 +436,7 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
     try {
       await api.rsvp(token, {
         events: Object.fromEntries(
-          events.map((e) => [e.id, { attending: answers[e.id].attending, headcount: answers[e.id].attending ? answers[e.id].headcount : 0 }]),
+          events.map((e) => [e.id, { attending: answers[e.id].attending, headcount: answers[e.id].attending ? answers[e.id].headcount : 0, food: answers[e.id].attending ? answers[e.id].food || {} : {} }]),
         ),
         dietary: anyAttending ? dietary : '',
         needs_stay: anyAttending && needsStay === true,
@@ -361,7 +444,8 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
         stay_notes: anyAttending && needsStay === true ? stayNotes : '',
         message,
         wants_to_dance: sangeetAttending && wantsDance === true,
-        dance_with: danceWith,
+        dance_type: danceType,
+        dance_with: danceType === 'solo' ? '' : danceWith,
         dance_notes: danceNotes,
         songs: filled,
       })
@@ -415,10 +499,20 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
 
           {wantsDance === true && (
             <div className="stack">
-              <label className="field">
-                <span>Who's dancing with you?</span>
-                <input value={danceWith} onChange={(e) => setDanceWith(e.target.value)} placeholder="Just me, or names of everyone in the group" maxLength={300} />
-              </label>
+              <div>
+                <p className="label">What kind of dance is it? <span className="muted small">(optional)</span></p>
+                <div className="choice-row" role="radiogroup" aria-label="Kind of dance">
+                  <Choice checked={danceType === 'solo'} onClick={() => setDanceType('solo')}>Solo</Choice>
+                  <Choice checked={danceType === 'couple'} onClick={() => setDanceType('couple')}>Couple</Choice>
+                  <Choice checked={danceType === 'group'} onClick={() => setDanceType('group')}>Group</Choice>
+                </div>
+              </div>
+              {(danceType === 'couple' || danceType === 'group') && (
+                <label className="field">
+                  <span>{danceType === 'couple' ? "Who's your partner?" : "Who's in your group?"}</span>
+                  <input value={danceWith} onChange={(e) => setDanceWith(e.target.value)} placeholder={danceType === 'couple' ? 'Their name' : 'Names of everyone dancing'} maxLength={300} />
+                </label>
+              )}
 
               <div>
                 <p className="label">Songs for your dance</p>
@@ -451,10 +545,13 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
       )}
 
       {anyAttending && (
-        <label className="field">
-          <span>Food preferences or allergies</span>
-          <textarea value={dietary} onChange={(e) => setDietary(e.target.value)} rows={2} placeholder="Jain, vegetarian, nut allergy…" maxLength={1000} />
-        </label>
+        <fieldset className="field-group">
+          <legend>Allergies</legend>
+          <label className="field">
+            <span>Allergies or anything else</span>
+            <textarea value={dietary} onChange={(e) => setDietary(e.target.value)} rows={2} placeholder="Nut allergy, no onion or garlic…" maxLength={1000} />
+          </label>
+        </fieldset>
       )}
 
       {anyAttending && guest.offer_stay && (
@@ -559,73 +656,3 @@ function Choice({ checked, onClick, children }) {
   )
 }
 
-function PhotoUpload({ token, preview }) {
-  const [files, setFiles] = useState([])
-  const [state, setState] = useState('idle') // idle | uploading | done
-  const [msg, setMsg] = useState('')
-  const inputRef = useRef(null)
-  const previews = useMemo(() => files.map((f) => (f.type.startsWith('image/') ? URL.createObjectURL(f) : null)), [files])
-  useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews])
-
-  async function upload() {
-    if (preview) {
-      setState('done')
-      setMsg(`${files.length} ${files.length === 1 ? 'file' : 'files'} would be added to the album. Preview only, nothing was uploaded.`)
-      setFiles([])
-      if (inputRef.current) inputRef.current.value = ''
-      return
-    }
-    setState('uploading')
-    setMsg('')
-    try {
-      // Upload in small batches so one slow phone connection doesn't fail everything.
-      for (let i = 0; i < files.length; i += 5) {
-        await api.uploadPhotos(token, files.slice(i, i + 5))
-        setMsg(`Uploaded ${Math.min(i + 5, files.length)} of ${files.length}`)
-      }
-      setState('done')
-      setMsg(`${files.length} ${files.length === 1 ? 'file' : 'files'} added to the album. Thank you!`)
-      setFiles([])
-      if (inputRef.current) inputRef.current.value = ''
-    } catch (e) {
-      setState('idle')
-      setMsg(`Upload stopped: ${e.message}`)
-    }
-  }
-
-  return (
-    <div className="stack">
-      <label className="dropzone">
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          onChange={(e) => {
-            setFiles(Array.from(e.target.files || []))
-            setState('idle')
-            setMsg('')
-          }}
-        />
-        <span>{files.length ? `${files.length} selected, tap to change` : 'Choose photos or videos'}</span>
-      </label>
-      {files.length > 0 && (
-        <ul className="thumbs">
-          {files.map((f, i) => (
-            <li key={i}>{previews[i] ? <img src={previews[i]} alt="" /> : <span className="vid">Video</span>}</li>
-          ))}
-        </ul>
-      )}
-      {files.length > 0 && (
-        <button className="btn btn-rani" onClick={upload} disabled={state === 'uploading'}>
-          {state === 'uploading' ? 'Uploading…' : `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'}`}
-        </button>
-      )}
-      {msg && (
-        <p className={state === 'done' ? 'success' : msg.startsWith('Upload stopped') ? 'error' : 'muted'} role="status">
-          {msg}
-        </p>
-      )}
-    </div>
-  )
-}
