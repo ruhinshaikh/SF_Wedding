@@ -110,6 +110,7 @@ class DanceGroup(Base):
     name: Mapped[str] = mapped_column(String(120))
     notes: Mapped[str] = mapped_column(Text, default="")
     songs: Mapped[list] = mapped_column(JSON, default=list)  # [{"title": str, "link": str}] chosen by the admins
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # guest id when a guest started it in their RSVP
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -135,6 +136,7 @@ class DanceMember(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
     group_id: Mapped[int] = mapped_column(ForeignKey("dance_groups.id", ondelete="CASCADE"))
+    added_by: Mapped[str] = mapped_column(String(10), default="admin")  # "admin" or "guest" (joined from their RSVP)
 
 
 class GroupMark(Base):
@@ -194,6 +196,10 @@ def init_db() -> None:
         dg_have = {c["name"] for c in insp.get_columns("dance_groups")}
         if "songs" not in dg_have:
             conn.execute(text("ALTER TABLE dance_groups ADD COLUMN songs JSON NOT NULL DEFAULT '[]'"))
+        if "created_by" not in dg_have:
+            conn.execute(text("ALTER TABLE dance_groups ADD COLUMN created_by INTEGER"))
+        if "added_by" not in {c["name"] for c in insp.get_columns("dance_members")}:
+            conn.execute(text("ALTER TABLE dance_members ADD COLUMN added_by VARCHAR(10) NOT NULL DEFAULT 'admin'"))
         if "is_admin" not in guest_have:
             conn.execute(text("ALTER TABLE guests ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
         if "dance_group_id" not in guest_have:

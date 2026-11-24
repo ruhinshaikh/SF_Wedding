@@ -66,6 +66,7 @@ export const api = {
   active: () => request('/admin/active', { admin: true }),
   rsvp: (token, body) => request(`/invite/${token}/rsvp`, { method: 'POST', body }),
   songsTaken: (token) => request(`/invite/${token}/songs-taken`),
+  inviteDanceGroups: (token) => request(`/invite/${token}/dance-groups`),
   inviteGroups: (token) => request(`/invite/${token}/groups`),
   login: (password, phone) => request('/admin/login', { method: 'POST', body: { password, phone } }),
   adminActivity: () => request('/admin/admins/activity', { admin: true }),

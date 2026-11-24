@@ -4,6 +4,17 @@ import { api, dayParts, fmtDateLong } from './api.js'
 import { sameSong, songLabel } from './songs.js'
 
 const emptySong = () => ({ title: '', link: '' })
+const emptyGroup = () => ({ name: '', notes: '', songs: [emptySong()] })
+const MAX_NEW_GROUPS = 3
+const firstName = (n) => (n || '').trim().split(/\s+/)[0] || 'My'
+const hasSong = (s) => !!(s.title.trim() || s.link.trim())
+const badLink = (s) => !!s.link.trim() && !/^https?:\/\//i.test(s.link.trim())
+const TAKEN_WARNING = 'Someone has already picked this song for their dance. You can keep it, but a different song might be better.'
+const SAMPLE_GROUPS = [
+  { id: -1, name: "Bride's cousins", notes: '', members: ['Zoya', 'Ayaan'], songs: [{ title: 'London Thumakda', link: '' }], mine: false },
+  { id: -2, name: 'College friends', notes: '', members: [], songs: [], mine: false },
+]
+const listNames = (names) => (names.length <= 4 ? names.join(', ') : `${names.slice(0, 4).join(', ')} and ${names.length - 4} more`)
 
 export default function Invite() {
   const { token } = useParams()
@@ -408,10 +419,23 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
   const [stayNotes, setStayNotes] = useState(existing?.stay_notes || '')
   const [message, setMessage] = useState(existing?.message || '')
   const [wantsDance, setWantsDance] = useState(existing ? (sangeet ? existing.wants_to_dance : null) : null)
-  const [danceType, setDanceType] = useState(existing?.dance_type || '')
-  const [danceWith, setDanceWith] = useState(existing?.dance_with || '')
-  const [danceNotes, setDanceNotes] = useState(existing?.dance_notes || '')
-  const [songs, setSongs] = useState(existing?.songs?.length ? existing.songs : [emptySong()])
+  // Replies sent before group dances existed: a "group" reply becomes a group they start (unless they're in one already),
+  // and a reply with songs but no kind of dance shows as a solo they can change.
+  const legacyGroup = existing?.wants_to_dance && existing.dance_type === 'group'
+  const legacyUntyped = existing?.wants_to_dance && !existing.dance_type && existing.songs?.length > 0
+  const [danceType, setDanceType] = useState(legacyGroup ? '' : legacyUntyped ? 'solo' : existing?.dance_type || '') // their own dance: '' | solo | couple
+  const [danceWith, setDanceWith] = useState(legacyGroup ? '' : existing?.dance_with || '')
+  const [danceNotes, setDanceNotes] = useState(legacyGroup ? '' : existing?.dance_notes || '')
+  const [songs, setSongs] = useState(!legacyGroup && existing?.songs?.length ? existing.songs : [emptySong()])
+  // group dances: every group (loaded once they say they'll dance), the ones they're in, and the ones they're starting
+  const [danceGroups, setDanceGroups] = useState(null)
+  const [joined, setJoined] = useState(null) // Set of group ids
+  const [groupsError, setGroupsError] = useState(false)
+  const [newGroups, setNewGroups] = useState(() =>
+    legacyGroup
+      ? [{ name: `${firstName(guest.name)}'s group`, notes: [existing.dance_with, existing.dance_notes].filter(Boolean).join('. ').slice(0, 500), songs: existing.songs?.length ? existing.songs : [emptySong()] }]
+      : [],
+  )
   const [status, setStatus] = useState(existing ? 'saved' : 'idle') // idle | sending | saved
   // songs other guests have already picked, so nobody dances to the same song twice
   const [taken, setTaken] = useState([])
@@ -441,10 +465,33 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
     api.songsTaken(token).then((r) => setTaken(r.songs)).catch(() => {})
   }, [token, preview, sangeetAttending, wantsDance])
 
+  useEffect(() => {
+    if (!sangeetAttending || wantsDance !== true || danceGroups) return
+    if (preview) {
+      setDanceGroups(SAMPLE_GROUPS)
+      setJoined(new Set())
+      return
+    }
+    let live = true
+    api
+      .inviteDanceGroups(token)
+      .then((r) => {
+        if (!live) return
+        setDanceGroups(r.groups)
+        setJoined(new Set(r.groups.filter((g) => g.mine).map((g) => g.id)))
+        if (legacyGroup && r.groups.some((g) => g.mine)) setNewGroups([])
+        setGroupsError(false)
+      })
+      .catch(() => live && setGroupsError(true))
+    return () => {
+      live = false
+    }
+  }, [token, preview, sangeetAttending, wantsDance, danceGroups, legacyGroup])
+
   // for each of this guest's songs: picked by someone else, or entered twice here
   const songWarnings = songs.map((s, i) => {
     if (!s.title.trim() && !s.link.trim()) return ''
-    if (taken.some((t) => sameSong(s, t))) return 'Someone has already picked this song for their dance. You can keep it, but a different song might be better.'
+    if (taken.some((t) => sameSong(s, t))) return TAKEN_WARNING
     if (songs.some((o, j) => j < i && sameSong(s, o))) return "You've added this song twice."
     return ''
   })
@@ -456,14 +503,24 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
     if (unanswered) return fail(`Please tell us if you can make the ${unanswered.name}.`)
     if (sangeetAttending && wantsDance === null) return fail('Please tell us if you want to dance at the Sangeet.')
     if (anyAttending && guest.offer_stay && needsStay === null) return fail('Please tell us if you will need a place to stay.')
-    const filled = songs.filter((s) => s.title.trim() || s.link.trim())
-    if (sangeetAttending && wantsDance && filled.length === 0)
-      return fail('Add at least one song, either a link or a title.')
-    if (sangeetAttending && wantsDance && filled.some((s) => s.link.trim() && !/^https?:\/\//i.test(s.link.trim())))
-      return fail('Song links need to start with http:// or https://')
-    if (sangeetAttending && wantsDance && songWarnings.some(Boolean) && !dupOk) {
-      setDupOk(true) // a second press sends anyway
-      return fail('Some of your songs are already taken (see the notes under them). Change them, or press send again to keep them.')
+    const dancing = sangeetAttending && wantsDance === true
+    const filled = danceType ? songs.filter(hasSong) : []
+    const starting = newGroups.map((g) => ({ name: g.name.trim(), notes: g.notes.trim(), songs: g.songs.filter(hasSong) }))
+    if (dancing) {
+      if (!joined)
+        return fail(groupsError ? "We couldn't load the group dances. Refresh the page and try again." : 'Still loading the group dances. Try again in a moment.')
+      if (starting.some((g) => !g.name)) return fail('Give your new group a name, or remove it.')
+      if (!danceType && joined.size === 0 && starting.length === 0)
+        return fail("Pick a solo or couple dance, or a group you're dancing in.")
+      if (danceType && filled.length === 0) return fail('Add at least one song for your own dance, either a link or a title.')
+      if ([...filled, ...starting.flatMap((g) => g.songs)].some(badLink)) return fail('Song links need to start with http:// or https://')
+      const groupSongTaken = starting.some((g) => g.songs.some((s) => taken.some((t) => sameSong(s, t))))
+      if ((songWarnings.some(Boolean) && danceType) || groupSongTaken) {
+        if (!dupOk) {
+          setDupOk(true) // a second press sends anyway
+          return fail('Some of your songs are already taken (see the notes under them). Change them, or press send again to keep them.')
+        }
+      }
     }
 
     if (preview) {
@@ -481,11 +538,13 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
         stay_guests: anyAttending && needsStay === true ? stayGuests : 0,
         stay_notes: anyAttending && needsStay === true ? stayNotes : '',
         message,
-        wants_to_dance: sangeetAttending && wantsDance === true,
-        dance_type: danceType,
-        dance_with: danceType === 'solo' ? '' : danceWith,
-        dance_notes: danceNotes,
-        songs: filled,
+        wants_to_dance: dancing,
+        dance_type: dancing ? danceType : '',
+        dance_with: dancing && danceType === 'couple' ? danceWith : '',
+        dance_notes: dancing && danceType ? danceNotes : '',
+        songs: dancing ? filled : [],
+        dance_groups: dancing ? [...joined] : [],
+        new_groups: dancing ? starting : [],
       })
       setStatus('saved')
     } catch (e) {
@@ -525,7 +584,7 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
       {sangeetAttending && (
         <fieldset className="field-group sangeet">
           <legend>Sangeet dance floor</legend>
-          <p className="muted">Want to perform, or have a dance planned with family or friends?</p>
+          <p className="muted">Doing a solo, a couple dance or dancing with a group? You can do more than one.</p>
           <div className="choice-row" role="radiogroup" aria-label="Dance at the Sangeet">
             <Choice checked={wantsDance === true} onClick={() => setWantsDance(true)}>
               Yes, I'd like to dance
@@ -537,62 +596,81 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
 
           {wantsDance === true && (
             <div className="stack">
-              <div>
-                <p className="label">What kind of dance is it? <span className="muted small">(optional)</span></p>
-                <div className="choice-row" role="radiogroup" aria-label="Kind of dance">
-                  <Choice checked={danceType === 'solo'} onClick={() => setDanceType('solo')}>Solo</Choice>
-                  <Choice checked={danceType === 'couple'} onClick={() => setDanceType('couple')}>Couple</Choice>
-                  <Choice checked={danceType === 'group'} onClick={() => setDanceType('group')}>Group</Choice>
-                </div>
-              </div>
-              {(danceType === 'couple' || danceType === 'group') && (
-                <label className="field">
-                  <span>{danceType === 'couple' ? "Who's your partner?" : "Who's in your group?"}</span>
-                  <input value={danceWith} onChange={(e) => setDanceWith(e.target.value)} placeholder={danceType === 'couple' ? 'Their name' : 'Names of everyone dancing'} maxLength={300} />
-                </label>
+              {taken.length > 0 && (
+                <details className="taken-songs">
+                  <summary>Songs other guests have already picked ({taken.length})</summary>
+                  <ul>
+                    {taken.map((t, k) => (
+                      <li key={k}>
+                        {songLabel(t)}
+                        {t.link && <> <a href={t.link} target="_blank" rel="noreferrer noopener">Listen</a></>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
 
-              <div>
-                <p className="label">Songs for your dance</p>
-                <p className="muted small">Paste a YouTube, Spotify or any music link. Add a title if you like.</p>
-                {taken.length > 0 && (
-                  <details className="taken-songs">
-                    <summary>Songs other guests have already picked ({taken.length})</summary>
-                    <ul>
-                      {taken.map((t, k) => (
-                        <li key={k}>
-                          {songLabel(t)}
-                          {t.link && <> <a href={t.link} target="_blank" rel="noreferrer noopener">Listen</a></>}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-                {songs.map((s, i) => (
-                  <div key={i}>
-                  <div className="song-row">
-                    <input aria-label={`Song ${i + 1} title`} value={s.title} onChange={(e) => setSong(i, { title: e.target.value })} placeholder="Song title" maxLength={200} />
-                    <input aria-label={`Song ${i + 1} link`} value={s.link} onChange={(e) => setSong(i, { link: e.target.value })} placeholder="https://…" inputMode="url" maxLength={500} />
-                    {songs.length > 1 && (
-                      <button type="button" className="icon-btn" onClick={() => setSongs(songs.filter((_, idx) => idx !== i))} aria-label={`Remove song ${i + 1}`}>
-                        ×
-                      </button>
+              <div className="dance-part">
+                <p className="label">Your own dance <span className="muted small">(optional)</span></p>
+                <p className="muted small">Doing a solo or a couple dance? Pick it. Skip this if you're only dancing with a group.</p>
+                <div className="choice-row" role="radiogroup" aria-label="Your own dance">
+                  <Choice checked={danceType === 'solo'} onClick={() => { setDupOk(false); setDanceType(danceType === 'solo' ? '' : 'solo') }}>Solo</Choice>
+                  <Choice checked={danceType === 'couple'} onClick={() => { setDupOk(false); setDanceType(danceType === 'couple' ? '' : 'couple') }}>Couple</Choice>
+                </div>
+
+                {danceType && (
+                  <div className="stack">
+                    {danceType === 'couple' && (
+                      <label className="field">
+                        <span>Who's your partner?</span>
+                        <input value={danceWith} onChange={(e) => setDanceWith(e.target.value)} placeholder="Their name" maxLength={300} />
+                      </label>
                     )}
+                    <div>
+                      <p className="label">Songs for your {danceType === 'solo' ? 'solo' : 'couple dance'}</p>
+                      <p className="muted small">Paste a YouTube, Spotify or any music link. Add a title if you like.</p>
+                      {songs.map((s, i) => (
+                        <div key={i}>
+                          <div className="song-row">
+                            <input aria-label={`Song ${i + 1} title`} value={s.title} onChange={(e) => setSong(i, { title: e.target.value })} placeholder="Song title" maxLength={200} />
+                            <input aria-label={`Song ${i + 1} link`} value={s.link} onChange={(e) => setSong(i, { link: e.target.value })} placeholder="https://…" inputMode="url" maxLength={500} />
+                            {songs.length > 1 && (
+                              <button type="button" className="icon-btn" onClick={() => setSongs(songs.filter((_, idx) => idx !== i))} aria-label={`Remove song ${i + 1}`}>
+                                ×
+                              </button>
+                            )}
+                          </div>
+                          {songWarnings[i] && <p className="song-warn" role="status">⚠ {songWarnings[i]}</p>}
+                        </div>
+                      ))}
+                      {songs.length < 5 && (
+                        <button type="button" className="link-btn" onClick={() => setSongs([...songs, emptySong()])}>
+                          Add another song
+                        </button>
+                      )}
+                    </div>
+                    <label className="field">
+                      <span>Anything the DJ should know?</span>
+                      <textarea value={danceNotes} onChange={(e) => setDanceNotes(e.target.value)} rows={2} placeholder="Which part of the song to play, how long you need" maxLength={1000} />
+                    </label>
                   </div>
-                  {songWarnings[i] && <p className="song-warn" role="status">⚠ {songWarnings[i]}</p>}
-                  </div>
-                ))}
-                {songs.length < 5 && (
-                  <button type="button" className="link-btn" onClick={() => setSongs([...songs, emptySong()])}>
-                    Add another song
-                  </button>
                 )}
               </div>
 
-              <label className="field">
-                <span>Anything the DJ should know?</span>
-                <textarea value={danceNotes} onChange={(e) => setDanceNotes(e.target.value)} rows={2} placeholder="Which part of the song to play, how long you need" maxLength={1000} />
-              </label>
+              <div className="dance-part">
+                <p className="label">Group dances</p>
+                <p className="muted small">Tick every group you're dancing in. Can't find yours? Start it here, and your friends and family can join it from their invitation.</p>
+                <GroupDances
+                  groups={danceGroups}
+                  joined={joined}
+                  setJoined={setJoined}
+                  newGroups={newGroups}
+                  setNewGroups={setNewGroups}
+                  taken={taken}
+                  error={groupsError}
+                  onEdit={() => setDupOk(false)}
+                />
+              </div>
             </div>
           )}
         </fieldset>
@@ -667,6 +745,113 @@ function RsvpForm({ token, guest, config, existing, preview, answers }) {
         )}
       </div>
     </form>
+  )
+}
+
+function GroupDances({ groups, joined, setJoined, newGroups, setNewGroups, taken, error, onEdit }) {
+  if (error) return <p className="error">We couldn't load the group dances. Refresh the page to try again.</p>
+  if (!groups || !joined) return <p className="muted small">Loading group dances…</p>
+
+  const toggle = (id) => {
+    onEdit()
+    setJoined((j) => {
+      const next = new Set(j)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const setGroup = (i, patch) => {
+    onEdit()
+    setNewGroups((gs) => gs.map((g, k) => (k === i ? { ...g, ...patch } : g)))
+  }
+  const setGroupSong = (i, j, patch) => setGroup(i, { songs: newGroups[i].songs.map((s, k) => (k === j ? { ...s, ...patch } : s)) })
+  const sameName = (name) => name.trim() && groups.find((g) => g.name.trim().toLowerCase() === name.trim().toLowerCase())
+
+  return (
+    <div className="stack">
+      {groups.length === 0 ? (
+        <p className="muted small">No group dances yet. Be the first to start one.</p>
+      ) : (
+        <ul className="dance-groups">
+          {groups.map((g) => {
+            const on = joined.has(g.id)
+            return (
+              <li key={g.id} className={`dance-group ${on ? 'on' : ''}`}>
+                <label className="dance-group-pick">
+                  <input type="checkbox" checked={on} onChange={() => toggle(g.id)} />
+                  <span>
+                    <strong>{g.name}</strong>
+                    <span className="muted small"> {g.members.length ? `· ${listNames(g.members)}` : '· no one yet'}</span>
+                  </span>
+                </label>
+                {g.notes && <p className="muted small">{g.notes}</p>}
+                {g.songs.length > 0 && (
+                  <ul className="group-songs">
+                    {g.songs.map((s, k) => (
+                      <li key={k}>
+                        ♪ {songLabel(s)}
+                        {s.link && <> <a href={s.link} target="_blank" rel="noreferrer noopener">Listen</a></>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {newGroups.map((g, i) => {
+        const same = sameName(g.name)
+        return (
+          <div key={i} className="new-group">
+            <div className="new-group-head">
+              <label className="field">
+                <span>Name of the group you're starting</span>
+                <input value={g.name} onChange={(e) => setGroup(i, { name: e.target.value })} placeholder="e.g. Groom's college friends" maxLength={120} />
+              </label>
+              <button type="button" className="icon-btn" onClick={() => { onEdit(); setNewGroups(newGroups.filter((_, k) => k !== i)) }} aria-label={`Remove the new group ${g.name || i + 1}`}>
+                ×
+              </button>
+            </div>
+            {same && <p className="song-warn">⚠ There's already a group called “{same.name}”. You'll join that one instead of starting another.</p>}
+            <div>
+              <p className="label">Songs for this group <span className="muted small">(optional)</span></p>
+              {g.songs.map((s, j) => (
+                <div key={j}>
+                  <div className="song-row">
+                    <input aria-label={`Group song ${j + 1} title`} value={s.title} onChange={(e) => setGroupSong(i, j, { title: e.target.value })} placeholder="Song title" maxLength={200} />
+                    <input aria-label={`Group song ${j + 1} link`} value={s.link} onChange={(e) => setGroupSong(i, j, { link: e.target.value })} placeholder="https://…" inputMode="url" maxLength={500} />
+                    {g.songs.length > 1 && (
+                      <button type="button" className="icon-btn" onClick={() => setGroup(i, { songs: g.songs.filter((_, k) => k !== j) })} aria-label={`Remove group song ${j + 1}`}>
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  {hasSong(s) && taken.some((t) => sameSong(s, t)) && <p className="song-warn" role="status">⚠ {TAKEN_WARNING}</p>}
+                </div>
+              ))}
+              {g.songs.length < 5 && (
+                <button type="button" className="link-btn" onClick={() => setGroup(i, { songs: [...g.songs, emptySong()] })}>
+                  Add another song
+                </button>
+              )}
+            </div>
+            <label className="field">
+              <span>A note for people joining <span className="muted small">(optional)</span></span>
+              <input value={g.notes} onChange={(e) => setGroup(i, { notes: e.target.value })} placeholder="e.g. Practice on Sundays, message Zoya to join" maxLength={500} />
+            </label>
+          </div>
+        )
+      })}
+
+      {newGroups.length < MAX_NEW_GROUPS && (
+        <button type="button" className="btn btn-ghost" onClick={() => { onEdit(); setNewGroups([...newGroups, emptyGroup()]) }}>
+          + Start a new group
+        </button>
+      )}
+    </div>
   )
 }
 

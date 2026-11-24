@@ -196,6 +196,16 @@ select { width: auto; }
 input:focus, textarea:focus, select:focus { border-color: var(--rani); outline: none; box-shadow: 0 0 0 3px rgba(184, 21, 90, 0.18); }
 textarea { resize: vertical; }
 .song-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 0.5rem; margin: 0.5rem 0; }
+.dance-part { display: grid; gap: 0.6rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.dance-groups { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.dance-group { border: 2px solid var(--line); border-radius: 12px; padding: 0.7rem 0.9rem; background: #fff; }
+.dance-group.on { border-color: var(--rani); background: #f2f8f5; }
+.dance-group > p { margin: 0.35rem 0 0 1.9rem; }
+.dance-group-pick { display: flex; align-items: flex-start; gap: 0.7rem; cursor: pointer; }
+.dance-group-pick input { width: 1.2rem; height: 1.2rem; margin-top: 0.15rem; accent-color: var(--rani); flex: none; }
+.group-songs { list-style: none; margin: 0.35rem 0 0 1.9rem; padding: 0; font-size: 0.9rem; color: var(--muted); }
+.new-group { border: 2px dashed var(--rani); border-radius: 12px; padding: 0.9rem; display: grid; gap: 0.6rem; }
+.new-group-head { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: end; }
 @media (max-width: 560px) { .song-row { grid-template-columns: 1fr; } .song-row .icon-btn { justify-self: end; } }
 .form-actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .success { color: var(--ok); font-weight: 600; margin: 0; }

@@ -500,6 +500,39 @@ def songs_taken(token: str, request: Request, db: Session = Depends(get_db)):
     return {"songs": out}
 
 
+def sangeet_event_ids(cfg: dict | None = None) -> set[str]:
+    return {e["id"] for e in (cfg or load_config())["events"] if e.get("is_sangeet")}
+
+
+def first_name(name: str) -> str:
+    return (name or "").strip().split(" ")[0]
+
+
+@app.get("/api/invite/{token}/dance-groups")
+def invite_dance_groups(token: str, request: Request, db: Session = Depends(get_db)):
+    """Sangeet group dances a guest can join from their RSVP, with who is in each and its songs."""
+    me = guest_by_token(db, token, request)
+    if not sangeet_event_ids() & set(me.events):
+        return {"groups": []}
+    names = {g.id: g.name for g in db.scalars(select(Guest)).all()}
+    members: dict[int, list[int]] = {}
+    for m in db.scalars(select(DanceMember)).all():
+        members.setdefault(m.group_id, []).append(m.guest_id)
+    out = []
+    for grp in db.scalars(select(DanceGroup).order_by(DanceGroup.name)).all():
+        ids = members.get(grp.id, [])
+        out.append({
+            "id": grp.id,
+            "name": grp.name,
+            "notes": grp.notes,
+            "songs": grp.songs or [],
+            "members": sorted(first_name(names[i]) for i in ids if i in names and i != me.id),
+            "mine": me.id in ids,
+            "started_by_me": grp.created_by == me.id,
+        })
+    return {"groups": out}
+
+
 class EventAnswer(BaseModel):
     attending: bool
     headcount: int = Field(default=1, ge=0, le=20)
@@ -511,6 +544,24 @@ class SongIn(BaseModel):
     link: str = Field(default="", max_length=500)
 
 
+class NewGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    notes: str = Field(default="", max_length=500)
+    songs: list[SongIn] = Field(default_factory=list, max_length=5)
+
+
+def clean_songs(raw: list[SongIn]) -> list[dict]:
+    out = []
+    for s in raw:
+        title, link = s.title.strip(), s.link.strip()
+        if not title and not link:
+            continue
+        if link and not link.lower().startswith(("http://", "https://")):
+            raise HTTPException(422, f"Song link must start with http:// or https:// ({link[:40]})")
+        out.append({"title": title, "link": link})
+    return out
+
+
 class RsvpIn(BaseModel):
     events: dict[str, EventAnswer]
     dietary: str = Field(default="", max_length=1000)
@@ -520,6 +571,9 @@ class RsvpIn(BaseModel):
     dance_with: str = Field(default="", max_length=300)
     dance_notes: str = Field(default="", max_length=1000)
     songs: list[SongIn] = Field(default_factory=list, max_length=5)
+    # group dances: ids of existing groups the guest is in, and groups they are starting
+    dance_groups: list[int] = Field(default_factory=list, max_length=20)
+    new_groups: list["NewGroupIn"] = Field(default_factory=list, max_length=3)
     needs_stay: bool = False
     stay_guests: int = Field(default=0, ge=0, le=20)
     stay_notes: str = Field(default="", max_length=1000)
@@ -548,18 +602,23 @@ def submit_rsvp(token: str, body: RsvpIn, request: Request, db: Session = Depend
     attending_sangeet = any(answers.get(s, {}).get("attending") for s in sangeet_ids)
     wants = body.wants_to_dance and attending_sangeet
     songs: list[dict] = []
+    join_ids: set[int] = set()
+    new_groups: list[tuple[str, str, list[dict]]] = []
     if wants:
         if body.dance_type not in ("", "solo", "couple", "group"):
             raise HTTPException(422, "Dance type must be solo, couple or group")
-        for s in body.songs:
-            title, link = s.title.strip(), s.link.strip()
-            if not title and not link:
-                continue
-            if link and not link.lower().startswith(("http://", "https://")):
-                raise HTTPException(422, f"Song link must start with http:// or https:// ({link[:40]})")
-            songs.append({"title": title, "link": link})
-        if not songs:
-            raise HTTPException(422, "Please add at least one song (a link or a title)")
+        own_dance = body.dance_type in ("solo", "couple", "group")
+        songs = clean_songs(body.songs) if own_dance else []
+        if own_dance and not songs:
+            raise HTTPException(422, "Please add at least one song for your own dance (a link or a title)")
+        existing_ids = set(db.scalars(select(DanceGroup.id)).all())
+        join_ids = {i for i in body.dance_groups if i in existing_ids}
+        for ng in body.new_groups:
+            name = " ".join(ng.name.split())
+            if name:
+                new_groups.append((name, ng.notes.strip(), clean_songs(ng.songs)))
+        if not own_dance and not join_ids and not new_groups:
+            raise HTTPException(422, "Tell us your solo or couple dance, or pick a group you're dancing in")
 
     any_attending = any(a["attending"] for a in answers.values())
     stay = body.needs_stay and any_attending and g.offer_stay  # only guests the admin offered a stay to
@@ -582,8 +641,36 @@ def submit_rsvp(token: str, body: RsvpIn, request: Request, db: Session = Depend
 
     r.responded_at = now()
     db.add(r)
+    sync_dance_groups(db, g, wants, join_ids, new_groups)
     db.commit()
     return {"ok": True, "rsvp": rsvp_dict(r)}
+
+
+def sync_dance_groups(db: Session, g: Guest, wants: bool, join_ids: set[int], new_groups: list[tuple[str, str, list[dict]]]) -> None:
+    """Make the guest's group memberships match their RSVP and create the groups they are starting.
+
+    A guest who isn't dancing only leaves the groups they joined themselves; groups the admins put them in stay.
+    A new group with the same name as an existing one joins that group instead of making a second one."""
+    mine = {m.group_id: m for m in db.scalars(select(DanceMember).where(DanceMember.guest_id == g.id)).all()}
+    if wants:
+        by_name = {grp.name.strip().lower(): grp for grp in db.scalars(select(DanceGroup)).all()}
+        for name, notes, songs in new_groups:
+            grp = by_name.get(name.lower())
+            if grp is None:
+                grp = DanceGroup(name=name, notes=notes, songs=songs, created_by=g.id)
+                db.add(grp)
+                db.flush()
+                by_name[name.lower()] = grp
+            join_ids.add(grp.id)
+        for gid, m in mine.items():
+            if gid not in join_ids:
+                db.delete(m)
+        for gid in join_ids - mine.keys():
+            db.add(DanceMember(guest_id=g.id, group_id=gid, added_by="guest"))
+    else:
+        for m in mine.values():
+            if m.added_by == "guest":
+                db.delete(m)
 
 
 # ---------------------------------------------------------------- admin: summary
@@ -919,6 +1006,8 @@ def list_dance_groups(db: Session = Depends(get_db)):
     guests = db.scalars(select(Guest).order_by(Guest.name)).all()
     sangeet_ids = {e["id"] for e in load_config()["events"] if e.get("is_sangeet")}
     groups_of = guest_dance_groups(db)
+    names = {g.id: g.name for g in guests}
+    self_joined = {(m.group_id, m.guest_id) for m in db.scalars(select(DanceMember).where(DanceMember.added_by == "guest")).all()}
     out = []
     for grp in groups:
         members = [
@@ -929,11 +1018,13 @@ def list_dance_groups(db: Session = Depends(get_db)):
                 "dance_type": g.rsvp.dance_type if g.rsvp else "",
                 "songs": len(g.rsvp.songs) if g.rsvp else 0,
                 "requested": (g.rsvp.songs or []) if g.rsvp and g.rsvp.wants_to_dance else [],
+                "self_joined": (grp.id, g.id) in self_joined,
             }
             for g in guests
             if grp.id in groups_of.get(g.id, [])
         ]
-        out.append({"id": grp.id, "name": grp.name, "notes": grp.notes, "songs": grp.songs or [], "members": members})
+        out.append({"id": grp.id, "name": grp.name, "notes": grp.notes, "songs": grp.songs or [], "members": members,
+                    "started_by": names.get(grp.created_by, "") if grp.created_by else ""})
     # guests who can be added to a group: anyone invited to a Sangeet (a guest can be in several groups)
     available = [
         {"guest_id": g.id, "name": g.name, "wants_to_dance": bool(g.rsvp and g.rsvp.wants_to_dance), "groups": len(groups_of.get(g.id, []))}

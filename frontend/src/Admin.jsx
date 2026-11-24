@@ -528,7 +528,9 @@ function Groups() {
                     <tr key={m.id}>
                       <td>
                         <strong>{m.name}</strong>
-                        <div className="muted small">{m.phone || 'No phone number'}</div>
+                        <div className="muted small">
+                          {m.phone ? (m.done ? <s aria-label={`${m.phone}, added`}>{m.phone}</s> : m.phone) : 'No phone number'}
+                        </div>
                       </td>
                       <td><span className={`badge ${m.done ? 'attending' : 'pending'}`}>{m.done ? 'Done' : 'To do'}</span></td>
                       <td>
@@ -688,7 +690,7 @@ function Songs() {
     <div className="stack-lg">
       <section className="stack">
         <h2 className="display h3">Dance groups</h2>
-        <p className="muted small">Make a group for each dance (for example "Bride's cousins"), then add guests and songs to it. A guest can be in several groups. Add guests from the dropdown on each group, or from the dance requests below.</p>
+        <p className="muted small">Make a group for each dance (for example "Bride's cousins"), then add guests and songs to it. A guest can be in several groups. Guests also see these groups in their RSVP: they can join them, or start a new one that shows up here.</p>
         <form className="toolbar" onSubmit={create}>
           <input aria-label="New dance group name" placeholder="New group name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
           <button className="btn btn-rani" disabled={!name.trim()}>Create group</button>
@@ -698,12 +700,15 @@ function Songs() {
         {dg.groups.map((g) => (
           <article key={g.id} className="act">
             <h3 className="act-name">{g.name} <span className="muted small">({g.members.length} {g.members.length === 1 ? 'guest' : 'guests'})</span></h3>
+            {g.started_by && <p className="muted small">Started by {g.started_by} from their RSVP</p>}
+            {g.notes && <p className="small">{g.notes}</p>}
             {g.members.length === 0 && <p className="muted small">Nobody added yet.</p>}
             <ul className="song-list">
               {g.members.map((m) => (
                 <li key={m.guest_id}>
                   {m.name}
-                  {m.wants_to_dance && <span className="muted small"> ({DANCE_LABEL[m.dance_type] || 'dancing'}, {m.songs} {m.songs === 1 ? 'song' : 'songs'})</span>}{' '}
+                  {m.self_joined && <span className="badge"> Joined from RSVP</span>}
+                  {m.wants_to_dance && m.dance_type && <span className="muted small"> (also a {DANCE_LABEL[m.dance_type].toLowerCase()} dance, {m.songs} {m.songs === 1 ? 'song' : 'songs'})</span>}{' '}
                   <button className="link-btn" onClick={() => removeFrom(g.id, m.guest_id)}>Remove</button>
                 </li>
               ))}
